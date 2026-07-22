@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
-
-function get_agent_counts() {
-    _herdr agent list |
-        jq --raw-output 'reduce .result.agents[].agent_status as $status ({}; .[$status] += 1) |
-            ((.idle // 0) + (.done // 0)),
-            (.working // 0),
-            (.blocked // 0)' | xargs
-}
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_herdr.sh"
 
 function render_status_bar() {
     local -r idle_foreground="$1" working_foreground="$2" blocked_foreground="$3"

@@ -29,11 +29,6 @@ See README.md for user-facing usage, keybindings, and configuration options.
 Rule of thumb: `main.sh` = tmux; `scripts/_herdr.sh` = herdr; everything else in
 `scripts/` = generic, tmux-free, herdr-agnostic glue that consumes `_herdr.sh`'s API.
 
-Note: as of this writing, herdr-specific functions (`_herdr`, `_herdr_interactive`,
-`wait_for_server`, `_create_workspace`, `_create_worktree`, `_start_agent`, `new_agent`,
-etc.) still live in `scripts/_common.sh`. New herdr-related code should go in
-`scripts/_herdr.sh` instead; migrate existing functions there as you touch them.
-
 ## Testing
 
 Use [bats-core](https://github.com/bats-core/bats-core) (`bats`) for tests. See

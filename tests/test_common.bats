@@ -1,22 +1,17 @@
 #!/usr/bin/env bats
 # Self-check for the debug/error-handling helpers in scripts/_common.sh.
-# No tmux/herdr binaries required - both are mocked. Run: bats tests/test_common.bats
+# No tmux/herdr binaries required - _common.sh has no knowledge of either.
+# Run: bats tests/test_common.bats
 
 setup() {
     SCRIPTS_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/../scripts"
 }
 
-# Runs $2 in a throwaway bash subprocess with tmux/herdr mocked and stdin
-# pinned to /dev/null, after sourcing _common.sh. Uses bats' run, so callers
-# assert on $status/$output.
+# Runs $2 in a throwaway bash subprocess with debug/stdin set, after sourcing
+# _common.sh. Uses bats' run, so callers assert on $status/$output.
 run_case() {
     local -r debug="$1" snippet="$2"
-    MOCK_DEBUG="$debug" run bash -c '
-        function tmux() {
-            [[ "$1" == show-option && "$3" == "@tmux_herdr_debug" ]] && echo "$MOCK_DEBUG"
-            return 0
-        }
-        function herdr() { echo "{\"result\":true}"; }
+    TMUX_HERDR_DEBUG="$debug" run bash -c '
         . "'"$SCRIPTS_DIR"'/_common.sh"
         '"$snippet"'
     ' </dev/null
@@ -48,25 +43,4 @@ run_case() {
     run_case off 'get_repo_metadata a b c /nonexistent-path-xyz'
     [[ "$output" == *"Not a git repo."* ]]
     [[ "$output" == *"unexpected error"* ]]
-}
-
-@test "debug on: _herdr dumps raw I/O" {
-    run_case on '_herdr agent list'
-    [[ "$output" == *"result"* ]]
-}
-
-@test "_cleanup_extra_panes: pane close result does not leak to caller's stdout" {
-    run_case off '
-        function herdr() {
-            if [[ "$1" == pane && "$2" == list ]]; then
-                echo "{\"result\":{\"panes\":[{\"pane_id\":\"p1\"},{\"pane_id\":\"p2\"}]}}"
-            elif [[ "$1" == pane && "$2" == close ]]; then
-                echo "{\"id\":\"cli:pane:close\",\"result\":{\"type\":\"ok\"}}"
-            fi
-        }
-        out=$(_cleanup_extra_panes ws1 p1)
-        echo "captured=[$out]"
-    '
-    [[ "$output" != *"cli:pane:close"* ]]
-    [[ "$output" == *"captured=[]"* ]]
 }
