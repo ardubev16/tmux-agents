@@ -4,84 +4,107 @@ set -euo pipefail
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/_common.sh"
 
-declare -r agent_pane_option='@herdr_agent_name'
+MAIN="$(realpath "${BASH_SOURCE[0]}")"
+declare -r MAIN
+declare -r state_option='@tmux_agents_state'
 
-function _shell_basename() {
-    basename "$(tmux show-option -gqv default-shell)"
+function tmux_option() {
+    local -r option=$(tmux show-option -gqv "$1")
+    echo "${option:-$2}"
 }
 
-function _find_pane_by() {
-    local -r format="$1" value="$2"
-    tmux list-panes -F "#{pane_id} #{$format}" |
-        awk -v val="$value" '$2 == val { print $1; exit }'
-}
+# Called by agent hooks from inside the agent's pane: working | blocked | done | clear.
+function set_state() {
+    local -r state="$1"
+    [[ -n ${TMUX_PANE:-} ]] || return 0
 
-function _repo_prefix() {
-    local -r pane_path="$1"
-    local repo_full_path repo_name project_name
-    get_repo_metadata repo_full_path repo_name project_name "$pane_path" 2>/dev/null || return 0
-    repo_prefix "$project_name" "$repo_name"
-}
-
-function _spawn_new_agent() {
-    local -r harness="$1" split_direction="$2" branch_name="$3" remain_on_exit="$4"
-
-    local focused_pane focused_command pane_path
-    read -r focused_pane focused_command pane_path <<<"$(tmux display-message -p '#{pane_id} #{pane_current_command} #{pane_current_path}')"
-
-    local -r prefix="$(_repo_prefix "$pane_path")"
-    local -r agent_name="${prefix}::${branch_name}"
-
-    local -r existing_pane="$(_find_pane_by "$agent_pane_option" "$agent_name")"
-    if [[ -n "$existing_pane" ]]; then
-        tmux select-pane -t "$existing_pane"
-        return 0
-    fi
-
-    local -r default_shell="$(_shell_basename)"
-
-    local target_pane
-    if [[ "$focused_command" == "$default_shell" ]]; then
-        target_pane="$focused_pane"
+    if [[ $state == clear ]]; then
+        tmux set-option -pu -t "$TMUX_PANE" "$state_option"
     else
-        target_pane=$(_find_pane_by "pane_current_command" "$default_shell")
+        tmux set-option -p -t "$TMUX_PANE" "$state_option" "$state"
     fi
 
-    if [[ -n "$target_pane" ]]; then
-        tmux select-pane -t "$target_pane"
-        tmux respawn-pane -k -t "$target_pane" "$SCRIPTS_DIR/new_agent.sh" "$harness" "$branch_name"
-    else
-        target_pane="$(tmux split-window -P -F '#{pane_id}' -c "$pane_path" "-$split_direction" "$SCRIPTS_DIR/new_agent.sh" "$harness" "$branch_name")"
+    # Ringing the pane's bell lets tmux flag the window (! in the window/session list) and the terminal.
+    if [[ $state == blocked || $state == done ]] && [[ $(tmux_option @tmux_agents_bell on) == on ]]; then
+        printf '\a' >"$(tmux display-message -p -t "$TMUX_PANE" '#{pane_tty}')"
     fi
-    tmux set-option -p -t "$target_pane" "$agent_pane_option" "$agent_name"
-    tmux set-option -p -t "$target_pane" remain-on-exit "$remain_on_exit"
+
+    local client
+    while read -r client; do
+        tmux refresh-client -S -t "$client"
+    done < <(tmux list-clients -F '#{client_name}')
+}
+
+# One agent per line, blocked first: pane_id \t state \t target \t command \t path
+function list_agents() {
+    local -r shell="$(basename "$(tmux show-option -gqv default-shell)")"
+    # shortcut: an agent killed without its exit hook keeps its state until its pane is back at the shell prompt.
+    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}" |
+        awk -F '\t' -v shell="$shell" -v home="$HOME" '
+            BEGIN { OFS = "\t"; rank["blocked"] = 0; rank["done"] = 1; rank["working"] = 2 }
+            $2 != "" && $4 != shell { sub("^" home, "~", $5); print rank[$2], $0 }' |
+        sort -s -n -k1,1 | cut -f2-
+}
+
+function status_bar() {
+    local -r done_foreground="$1" working_foreground="$2" blocked_foreground="$3"
+    list_agents | awk -F '\t' \
+        -v d="$done_foreground" -v w="$working_foreground" -v b="$blocked_foreground" '
+        { n[$2]++ }
+        END { printf "#[fg=%s] ○ %d #[fg=%s] ⦿ %d #[fg=%s] ● %d ", d, n["done"], w, n["working"], b, n["blocked"] }'
 }
 
 function agent_dashboard() {
-    tmux display-popup -w 90% -h 90% -E "$SCRIPTS_DIR/agent_dashboard.sh"
+    tmux display-popup -w 90% -h 90% -E "'$SCRIPTS_DIR/dashboard.sh' '$MAIN'"
 }
 
-function new_agent() {
-    local -r harness="$1" split_direction="$2" remain_on_exit="$3"
-    local -r branch_name="$(git -C "$(tmux display-message -p '#{pane_current_path}')" branch --show-current)"
-    _spawn_new_agent "$harness" "$split_direction" "$branch_name" "$remain_on_exit"
+function preview_agent() {
+    tmux capture-pane -e -p -S -200 -t "$1"
 }
 
-function new_agent_branch() {
-    local -r harness="$1" split_direction="$2" remain_on_exit="$3"
+function switch_agent() {
+    tmux switch-client -t "$1"
+}
 
+function reply_agent() {
+    local -r pane="$1"
+    local text
+    read -r -e -p "reply (empty = just Enter, Ctrl-C = cancel): " text </dev/tty
+    [[ -n $text ]] && tmux send-keys -t "$pane" -l "$text"
+    tmux send-keys -t "$pane" Enter
+}
+
+function new_worktree() {
     local -r current_path=$(tmux display-message -p '#{pane_current_path}')
     local -r tmpfile="$(mktemp)"
 
     local popup_exit=0
-    tmux display-popup -E "$SCRIPTS_DIR/select_branch.sh '$current_path' '$tmpfile'" || popup_exit=$?
+    tmux display-popup -E "'$SCRIPTS_DIR/select_branch.sh' '$current_path' '$tmpfile'" || popup_exit=$?
 
-    local -r branch_name="$(<"$tmpfile")"
+    local -r branch="$(<"$tmpfile")"
     rm -f "$tmpfile"
 
-    [[ "$popup_exit" == 130 || -z "$branch_name" ]] && return 0
+    [[ $popup_exit == 130 || -z $branch ]] && return 0
 
-    _spawn_new_agent "$harness" "$split_direction" "$branch_name" "$remain_on_exit"
+    local wt_path
+    wt_path=$("$SCRIPTS_DIR/worktree.sh" "$current_path" "$branch" "$(tmux_option @tmux_agents_worktree_dir "")")
+
+    # Reuse any session already rooted there (e.g. the main checkout opened by a sessionizer).
+    local session
+    session=$(tmux list-sessions -F '#{session_path}	#{session_name}' |
+        awk -F '\t' -v path="$wt_path" '$1 == path { print $2; exit }')
+
+    if [[ -z $session ]]; then
+        local repo_full_path repo_name project_name
+        get_repo_metadata repo_full_path repo_name project_name "$current_path"
+        session=$(tr '.:' '__' <<<"$repo_name@$branch")
+
+        tmux new-session -ds "$session" -c "$wt_path"
+        local -r command="$(tmux_option @tmux_agents_worktree_command "")"
+        [[ -n $command ]] && tmux send-keys -t "=$session:" "$command" Enter
+    fi
+
+    tmux switch-client -t "=$session"
 }
 
 if [[ $# -lt 1 ]]; then
@@ -92,16 +115,13 @@ command="$1"
 shift
 
 case "$command" in
-agent_dashboard)
-    agent_dashboard "$@"
-    ;;
-new_agent)
-    new_agent "$@"
-    ;;
-new_agent_branch)
-    new_agent_branch "$@"
-    ;;
-*)
-    die "Unknown command: $command"
-    ;;
+state) set_state "$@" ;;
+status_bar) status_bar "$@" ;;
+agent_dashboard) agent_dashboard "$@" ;;
+list_agents) list_agents "$@" ;;
+preview_agent) preview_agent "$@" ;;
+switch_agent) switch_agent "$@" ;;
+reply_agent) reply_agent "$@" ;;
+new_worktree) new_worktree "$@" ;;
+*) die "Unknown command: $command" ;;
 esac

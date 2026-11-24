@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Self-check for the debug/error-handling helpers in scripts/_common.sh.
-# No tmux/herdr binaries required - _common.sh has no knowledge of either.
+# No tmux binary required - _common.sh has no knowledge of it.
 # Run: bats tests/test_common.bats
 
 setup() {
@@ -11,7 +11,7 @@ setup() {
 # _common.sh. Uses bats' run, so callers assert on $status/$output.
 run_case() {
     local -r debug="$1" snippet="$2"
-    TMUX_HERDR_DEBUG="$debug" run bash -c '
+    TMUX_AGENTS_DEBUG="$debug" run bash -c '
         . "'"$SCRIPTS_DIR"'/_common.sh"
         '"$snippet"'
     ' </dev/null

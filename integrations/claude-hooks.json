@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state working" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state working" }] }],
+    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state blocked" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state done" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state clear" }] }]
+  }
+}
