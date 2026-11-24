@@ -15,11 +15,18 @@ through their own hooks, so nothing has to run through a separate multiplexer.
 ### Agent hooks
 
 Agents call `"$TMUX_AGENTS" state <working|blocked|done|clear>` from inside their pane. The plugin
-exports `TMUX_AGENTS` to every pane created after it loads. You only need to set this up once per harness:
+exports `TMUX_AGENTS` to every pane created after it loads. Set up the hooks once:
 
-- **omp / pi**: `ln -s "$PWD/integrations/omp.ts" ~/.omp/agent/extensions/tmux-agents.ts`
-- **Claude Code**: merge [`integrations/claude-hooks.json`](integrations/claude-hooks.json) into `~/.claude/settings.json`.
+```sh
+~/.config/tmux/plugins/tmux-agents/integrations/install.sh install    # or: uninstall
+```
+
+- **omp / pi**: symlinks [`integrations/omp.ts`](integrations/omp.ts) into `~/.omp/agent/extensions/`.
+- **Claude Code**: merges [`integrations/claude-hooks.json`](integrations/claude-hooks.json) into
+  `~/.claude/settings.json`, keeping your own hooks. It skips the file if it is a symlink (e.g. managed by Home Manager).
 - **Anything else**: call the command above from whatever hooks the harness provides.
+
+Run `uninstall` before removing the plugin: TPM gives plugins no removal hook.
 
 ### Status indicator
 
