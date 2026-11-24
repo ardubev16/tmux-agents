@@ -8,6 +8,7 @@ declare -r herdr_status_placeholder='\#{tmux_herdr_status}'
 
 declare -r harness_config='@tmux_herdr_harness'
 declare -r split_direction_config='@tmux_herdr_split_direction'
+declare -r remain_on_exit_config='@tmux_herdr_remain_on_exit'
 
 declare -r key_dashboard_config='@tmux_herdr_key_dashboard'
 declare -r key_new_agent_config='@tmux_herdr_key_new_agent'
@@ -30,6 +31,7 @@ function init_tmux_herdr() {
     local -r \
         harness=$(tmux_option "$harness_config" "claude") \
         split_direction=$(tmux_option "$split_direction_config" "h") \
+        remain_on_exit=$(tmux_option "$remain_on_exit_config" "off") \
         key_dashboard=$(tmux_option "$key_dashboard_config" "H") \
         key_new_agent=$(tmux_option "$key_new_agent_config" "N") \
         key_new_agent_branch=$(tmux_option "$key_new_agent_branch_config" "B") \
@@ -39,8 +41,8 @@ function init_tmux_herdr() {
     tmux set-environment -g TMUX_HERDR_DEBUG "$debug"
 
     tmux bind-key "$key_dashboard" run-shell "$CURRENT_DIR/main.sh agent_dashboard"
-    tmux bind-key "$key_new_agent" run-shell "$CURRENT_DIR/main.sh new_agent \"$harness\" \"$split_direction\""
-    tmux bind-key "$key_new_agent_branch" run-shell "$CURRENT_DIR/main.sh new_agent_branch \"$harness\" \"$split_direction\""
+    tmux bind-key "$key_new_agent" run-shell "$CURRENT_DIR/main.sh new_agent \"$harness\" \"$split_direction\" \"$remain_on_exit\""
+    tmux bind-key "$key_new_agent_branch" run-shell "$CURRENT_DIR/main.sh new_agent_branch \"$harness\" \"$split_direction\" \"$remain_on_exit\""
 
     "$CURRENT_DIR/scripts/init.sh"
 }

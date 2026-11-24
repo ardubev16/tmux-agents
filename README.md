@@ -93,6 +93,10 @@ set -g @tmux_herdr_harness 'claude'
 # shell pane is available to reuse ('h' for horizontal, 'v' for vertical)
 set -g @tmux_herdr_split_direction 'h'
 
+# Keep an agent's pane open (showing "Pane is dead") instead of closing it
+# when the agent is closed
+set -g @tmux_herdr_remain_on_exit 'off'
+
 # Debug mode: when enabled, prints verbose debug details to stderr.
 set -g @tmux_herdr_debug 'off'
 

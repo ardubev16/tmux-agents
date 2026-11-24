@@ -24,7 +24,7 @@ function _repo_prefix() {
 }
 
 function _spawn_new_agent() {
-    local -r harness="$1" split_direction="$2" branch_name="$3"
+    local -r harness="$1" split_direction="$2" branch_name="$3" remain_on_exit="$4"
 
     local focused_pane focused_command pane_path
     read -r focused_pane focused_command pane_path <<<"$(tmux display-message -p '#{pane_id} #{pane_current_command} #{pane_current_path}')"
@@ -54,6 +54,7 @@ function _spawn_new_agent() {
         target_pane="$(tmux split-window -P -F '#{pane_id}' -c "$pane_path" "-$split_direction" "$SCRIPTS_DIR/new_agent.sh" "$harness" "$branch_name")"
     fi
     tmux set-option -p -t "$target_pane" "$agent_pane_option" "$agent_name"
+    tmux set-option -p -t "$target_pane" remain-on-exit "$remain_on_exit"
 }
 
 function agent_dashboard() {
@@ -61,13 +62,13 @@ function agent_dashboard() {
 }
 
 function new_agent() {
-    local -r harness="$1" split_direction="$2"
+    local -r harness="$1" split_direction="$2" remain_on_exit="$3"
     local -r branch_name="$(git -C "$(tmux display-message -p '#{pane_current_path}')" branch --show-current)"
-    _spawn_new_agent "$harness" "$split_direction" "$branch_name"
+    _spawn_new_agent "$harness" "$split_direction" "$branch_name" "$remain_on_exit"
 }
 
 function new_agent_branch() {
-    local -r harness="$1" split_direction="$2"
+    local -r harness="$1" split_direction="$2" remain_on_exit="$3"
 
     local -r current_path=$(tmux display-message -p '#{pane_current_path}')
     local -r tmpfile="$(mktemp)"
@@ -80,7 +81,7 @@ function new_agent_branch() {
 
     [[ "$popup_exit" == 130 || -z "$branch_name" ]] && return 0
 
-    _spawn_new_agent "$harness" "$split_direction" "$branch_name"
+    _spawn_new_agent "$harness" "$split_direction" "$branch_name" "$remain_on_exit"
 }
 
 if [[ $# -lt 1 ]]; then
