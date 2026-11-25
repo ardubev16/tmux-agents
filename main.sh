@@ -9,6 +9,7 @@ declare -r MAIN
 declare -r state_option='@tmux_agents_state'
 declare -r transcript_option='@tmux_agents_transcript'
 declare -r socket_option='@tmux_agents_socket'
+declare -r unread_option='@tmux_agents_unread'
 
 function tmux_option() {
     local -r option=$(tmux show-option -gqv "$1")
@@ -22,11 +23,19 @@ function set_state() {
 
     if [[ $state == clear ]]; then
         local option
-        for option in "$state_option" "$transcript_option" "$socket_option"; do
+        for option in "$state_option" "$transcript_option" "$socket_option" "$unread_option"; do
             tmux set-option -pu -t "$TMUX_PANE" "$option"
         done
     else
         tmux set-option -p -t "$TMUX_PANE" "$state_option" "$state"
+    fi
+
+    # Finished while you were not looking at it: the dashboard marks it until you visit the pane.
+    local -r visible="#{&&:#{pane_active},#{&&:#{window_active},#{session_attached}}}"
+    if [[ $state == done && $(tmux display-message -p -t "$TMUX_PANE" "$visible") != 1 ]]; then
+        tmux set-option -p -t "$TMUX_PANE" "$unread_option" 1
+    elif [[ $state != clear ]]; then
+        tmux set-option -pu -t "$TMUX_PANE" "$unread_option"
     fi
 
     # Ringing the pane's bell lets tmux flag the window (! in the window/session list) and the terminal.
@@ -54,14 +63,24 @@ function set_session() {
     fi
 }
 
-# One agent per line, blocked first: pane_id \t state \t target \t command \t path \t transcript \t socket
+# Called by tmux hooks when a pane is shown: clears its unread mark.
+function seen() {
+    tmux set-option -pu -t "$1" "$unread_option" 2>/dev/null || true
+}
+
+# One agent per line, blocked first, then unread done: pane_id \t state \t target \t command \t path \t
+# transcript \t socket \t unread
 function list_agents() {
     local -r shell="$(basename "$(tmux show-option -gqv default-shell)")"
     # shortcut: an agent killed without its exit hook keeps its state until its pane is back at the shell prompt.
-    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}	#{$transcript_option}	#{$socket_option}" |
+    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}	#{$transcript_option}	#{$socket_option}	#{$unread_option}" |
         awk -F '\t' -v shell="$shell" -v home="$HOME" '
-            BEGIN { OFS = "\t"; rank["blocked"] = 0; rank["done"] = 1; rank["working"] = 2 }
-            $2 != "" && $4 != shell { sub("^" home, "~", $5); print rank[$2], $0 }' |
+            BEGIN { OFS = "\t"; rank["blocked"] = 0; rank["done"] = 2; rank["working"] = 3 }
+            $2 != "" && $4 != shell {
+                sub("^" home, "~", $5)
+                r = ($2 == "done" && $8 != "") ? 1 : rank[$2]
+                print r, $0
+            }' |
         sort -s -n -k1,1 | cut -f2-
 }
 
@@ -79,6 +98,12 @@ function agent_dashboard() {
 
 function switch_agent() {
     tmux switch-client -t "$1"
+    seen "$1"
+}
+
+# Stops the agent by closing its pane (tmux sends the harness SIGHUP).
+function close_agent() {
+    tmux kill-pane -t "$1"
 }
 
 # Sends $2 followed by Enter; an empty $2 sends just Enter.
@@ -135,6 +160,8 @@ status_bar) status_bar "$@" ;;
 agent_dashboard) agent_dashboard "$@" ;;
 list_agents) list_agents "$@" ;;
 switch_agent) switch_agent "$@" ;;
+close_agent) close_agent "$@" ;;
+seen) seen "$@" ;;
 reply_agent) reply_agent "$@" ;;
 new_worktree) new_worktree "$@" ;;
 *) die "Unknown command: $command" ;;

@@ -1,6 +1,8 @@
 """Turn an agent's JSONL session file (omp/pi or Claude Code) into Markdown blocks for the dashboard."""
 
+import functools
 import json
+import os
 from pathlib import Path
 
 # Tool-call argument shown next to the tool name, first match wins (omp's "i" is its intent line).
@@ -72,3 +74,30 @@ def to_blocks(path: str) -> list[str]:
         else:
             out.append(block)
     return out
+
+
+def title(path: str) -> str:
+    """The session name the harness gave it: omp keeps it on the first line, Claude Code appends ai-title entries."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return ""
+    return _title(path, stat.st_mtime_ns, stat.st_size)
+
+
+@functools.lru_cache(maxsize=64)
+def _title(path: str, _mtime_ns: int, _size: int) -> str:
+    found = ""
+    with open(path, errors="replace") as file:
+        for line in file:
+            if '"title"' not in line and '"ai-title"' not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # a line still being written
+            if entry.get("type") == "title":
+                return entry.get("title", "")  # omp: the first line, rewritten in place on renames
+            if entry.get("type") == "ai-title":
+                found = entry.get("aiTitle", found)
+    return found

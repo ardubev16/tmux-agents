@@ -34,6 +34,12 @@ function init_tmux_agents() {
 
     tmux bind-key "$key_dashboard" run-shell "$CURRENT_DIR/main.sh agent_dashboard"
     tmux bind-key "$key_worktree" run-shell "$CURRENT_DIR/main.sh new_worktree"
+
+    # Visiting an agent's pane clears its unread mark; fixed index so re-sourcing replaces instead of appending.
+    local hook
+    for hook in after-select-pane after-select-window session-window-changed client-session-changed pane-focus-in; do
+        tmux set-hook -g "$hook[42]" "run-shell -b \"'$CURRENT_DIR/main.sh' seen '#{pane_id}'\""
+    done
 }
 
 function init_tmux_agents_status() {

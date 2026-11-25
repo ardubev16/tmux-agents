@@ -14,6 +14,8 @@ See README.md for user-facing usage, keybindings, and configuration options.
   (`state`, `session`, `status_bar`, `agent_dashboard` and its callbacks, `new_worktree`).
   Per-pane options: `@tmux_agents_state`, plus what `session` reports: the agent's session
   file (`@tmux_agents_transcript`) and, for omp, its socket (`@tmux_agents_socket`).
+  `@tmux_agents_unread` marks a pane that finished while not visible; tmux hooks set in
+  `main.tmux` clear it (`main.sh seen`) when the pane is shown.
 - `scripts/` — everything here must run standalone, with no dependency on tmux being
   present or active.
   - `_common.sh` — generic helpers (git metadata, worktree creation, fzf branch picker,

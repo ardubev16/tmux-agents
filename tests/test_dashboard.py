@@ -108,16 +108,20 @@ class FakeAgent:
 
 
 def fake_main(tmp_path: Path, socket: str = "") -> tuple[str, Path]:
-    """A main.sh stand-in: a blocked agent without a session, a working one with a long transcript."""
+    """A main.sh stand-in: a blocked agent without a session, a working titled one with a long transcript,
+    and a finished one nobody has looked at yet."""
     entries = [omp_message(str(i), str(i - 1) if i else None, "assistant", text(f"answer {i}")) for i in range(100)]
     entries.append(omp_message("100", "99", "assistant", text("```\n" + "x" * 300 + "\n```")))
-    transcript = write_jsonl(tmp_path / "t.jsonl", entries)
+    transcript = write_jsonl(tmp_path / "t.jsonl", [{"type": "title", "title": "Fix the bug"}, *entries])
     log = tmp_path / "calls"
     script = tmp_path / "main.sh"
     script.write_text(f"""#!/usr/bin/env bash
 printf '%s\\n' "$*" >>'{log}'
 case "$1" in
-list_agents) printf '%%1\\tblocked\\ts:1.0\\tclaude\\t~/a\\t\\t\\n%%2\\tworking\\ts:2.0\\tomp\\t~/b\\t{transcript}\\t{socket}\\n' ;;
+list_agents)
+    printf '%%1\\tblocked\\ts:1.0\\tclaude\\t~/a\\t\\t\\t\\n'
+    printf '%%2\\tworking\\ts:2.0\\tomp\\t~/b\\t{transcript}\\t{socket}\\t\\n'
+    grep -q '^close_agent %3' '{log}' || printf '%%3\\tdone\\ts:3.0\\tomp\\t~/c\\t\\t\\t1\\n' ;;
 esac
 """)
     script.chmod(0o755)
@@ -226,3 +230,37 @@ async def test_q_closes_but_types_in_a_reply(tmp_path):
         await pilot.press("q")
     assert "reply_agent %1 q" in log.read_text().splitlines()
     assert app.return_code == 0
+
+
+def test_titles_from_both_harnesses(tmp_path):
+    from tmux_agents.transcript import title
+
+    omp = write_jsonl(tmp_path / "o.jsonl", [{"type": "title", "title": "Omp name", "pad": "  "}, {"type": "session"}])
+    claude = write_jsonl(
+        tmp_path / "c.jsonl",
+        [{"type": "ai-title", "aiTitle": "first"}, {"type": "user"}, {"type": "ai-title", "aiTitle": "renamed"}],
+    )
+    assert (title(omp), title(claude), title(str(tmp_path / "missing"))) == ("Omp name", "renamed", "")
+
+
+async def test_list_shows_names_and_what_needs_you(tmp_path):
+    main_sh, _ = fake_main(tmp_path)
+    app = Dashboard(main_sh)
+    async with app.run_test(size=(120, 30)):
+        listing = app.query_one("#agents")
+        labels = [str(listing.get_option_at_index(i).prompt).split("\n")[0] for i in range(listing.option_count)]
+        assert labels[0] == "● claude needs input"
+        assert labels[1][2:] == "Fix the bug"
+        assert labels[2] == "● omp finished"
+
+
+async def test_close_needs_confirmation(tmp_path):
+    main_sh, log = fake_main(tmp_path)
+    app = Dashboard(main_sh)
+    async with app.run_test() as pilot:
+        await pilot.press("down", "down", "x", "escape", "x")
+        assert "close_agent %3" not in log.read_text()
+        await pilot.press("x")
+        await pilot.pause()
+        assert "close_agent %3" in log.read_text().splitlines()
+        assert app.query_one("#agents").option_count == 2

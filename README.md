@@ -52,8 +52,12 @@ tmux default.
 
 | Key          | Action                                                                                                                       |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `prefix + a` | Agent dashboard popup: agents on the left (blocked first), the highlighted agent's chat on the right, both updating live. `Enter` switch to it, `Ctrl-r` reply, `PgUp`/`PgDn` scroll the chat, `q`/`Esc` close |
+| `prefix + a` | Agent dashboard popup: agents on the left, the highlighted agent's chat on the right, both updating live. `Enter` switch to it, `Ctrl-r` reply, `PgUp`/`PgDn` scroll the chat, `x` twice close the agent, `q`/`Esc` close |
 | `prefix + W` | Pick a branch (fzf), create or reuse its worktree, and switch to a tmux session rooted there (reuses any session already there) |
+
+Agents are listed by the session name their harness gave them. Agents that need input (**needs input**) come
+first, then agents that finished while you were not looking at their pane (**finished**, cleared when you visit
+the pane), then the rest. Closing an agent (`x`, then `x` again to confirm) kills its pane, which stops the harness.
 
 The chat is rendered from the agent's session file, so it wraps to the popup width (prose, code and tables) and
 stays visible while the agent's pane shows something else, e.g. `$EDITOR` on a long prompt. Only agents whose

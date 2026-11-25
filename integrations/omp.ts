@@ -10,6 +10,7 @@ import { join } from "node:path";
 type Block = { type?: string; text?: string };
 type Event = { toolName?: string; text?: string; prompt?: string; message?: { role?: string; content?: Block[] } };
 type Ctx = {
+  hasUI?: boolean;
   sessionManager?: { getSessionFile?: () => string | undefined };
   ui?: { getEditorText?: () => string; setEditorText?: (text: string) => void };
 };
@@ -17,15 +18,15 @@ type Pi = { on(event: string, handler: (event: Event, ctx: Ctx) => void): void }
 
 // queued: prompts submitted while the agent runs; omp writes them to the session file only when it delivers them.
 type Live = { text: string; thinking: boolean; tool: string; streaming: boolean; queued: string[] };
+// One per process, kept on globalThis so an extension reload keeps the socket and its subscribers.
+type Shared = { ctx?: Ctx; live: Live; running: boolean; subscribers: Set<Socket>; socketPath: string };
 
 export default function (pi: Pi): void {
   if (!process.env.TMUX_PANE) return;
   const main = process.env.TMUX_AGENTS || fromTmux();
   if (!main) return;
-  // Subagents load extensions in the same process and pane; only the first (main) session reports.
-  const owner = globalThis as { tmuxAgentsLoaded?: boolean };
-  if (owner.tmuxAgentsLoaded) return;
-  owner.tmuxAgentsLoaded = true;
+  const global = globalThis as { tmuxAgents?: Shared };
+  const shared = (global.tmuxAgents ??= serve());
 
   // Sync keeps transitions ordered and survives the process exiting right after session_shutdown; tmux calls take ms.
   const run = (...args: string[]) => {
@@ -33,19 +34,86 @@ export default function (pi: Pi): void {
       execFileSync(main, args, { stdio: "ignore" });
     } catch {}
   };
-
-  let ctx: Ctx | undefined;
-  let live: Live = { text: "", thinking: false, tool: "", streaming: false, queued: [] };
-  let running = false;
-  const subscribers = new Set<Socket>();
   const push = (patch: Partial<Live>) => {
-    live = { ...live, ...patch };
-    const line = `${JSON.stringify(live)}\n`;
-    for (const conn of subscribers) conn.write(line);
+    shared.live = { ...shared.live, ...patch };
+    const line = `${JSON.stringify(shared.live)}\n`;
+    for (const conn of shared.subscribers) conn.write(line);
+  };
+  // Subagents run in this process and pane too, without a UI; only the interactive session reports.
+  const on = (event: string, handler: (event: Event, ctx: Ctx) => void) =>
+    pi.on(event, (e, c) => c?.hasUI !== false && handler(e, c));
+
+  const report = (c: Ctx) => {
+    shared.ctx = c;
+    const file = c.sessionManager?.getSessionFile?.();
+    if (file) run("session", file, shared.socketPath);
   };
 
-  const socketPath = join(tmpdir(), `tmux-agents-${process.pid}.sock`);
-  rmSync(socketPath, { force: true });
+  on("session_start", (_, c) => report(c));
+  on("session_switch", (_, c) => report(c));
+  on("agent_start", (_, c) => {
+    shared.ctx = c;
+    shared.running = true;
+    run("state", "working");
+  });
+  on("agent_end", () => {
+    shared.running = false;
+    run("state", "done");
+  });
+  on("input", (event) => {
+    const text = event.text?.trim();
+    // Slash commands and !bash run right away instead of queueing.
+    if (shared.running && text && !/^[/!]/.test(text)) push({ queued: [...shared.live.queued, text] });
+  });
+  on("before_agent_start", (event) => {
+    const prompt = event.prompt ?? "";
+    const queued = shared.live.queued;
+    if (queued.some((q) => prompt.includes(q))) push({ queued: queued.filter((q) => !prompt.includes(q)) });
+  });
+  on("tool_approval_requested", () => run("state", "blocked"));
+  on("tool_approval_resolved", () => run("state", "working"));
+  on("message_update", (event) => {
+    if (event.message?.role !== "assistant") return;
+    const blocks = event.message.content ?? [];
+    const text = blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n\n");
+    push({ text, thinking: blocks.at(-1)?.type === "thinking", streaming: true });
+  });
+  on("message_end", (event) => {
+    if (event.message?.role === "assistant") push({ text: "", thinking: false, streaming: false });
+  });
+  on("tool_execution_start", (event) => {
+    push({ tool: event.toolName ?? "tool" });
+    // The ask tool waits for the user's answer.
+    if (event.toolName === "ask") run("state", "blocked");
+  });
+  on("tool_execution_end", (event) => {
+    push({ tool: "" });
+    if (event.toolName === "ask") run("state", "working");
+  });
+  on("session_shutdown", () => run("state", "clear"));
+}
+
+function serve(): Shared {
+  const shared: Shared = {
+    live: { text: "", thinking: false, tool: "", streaming: false, queued: [] },
+    running: false,
+    subscribers: new Set(),
+    socketPath: join(tmpdir(), `tmux-agents-${process.pid}.sock`),
+  };
+  const handle = (conn: Socket, request: { op?: string; text?: string }) => {
+    const ui = shared.ctx?.ui;
+    if (request.op === "get_draft") {
+      conn.end(`${JSON.stringify({ draft: ui?.getEditorText?.() ?? "" })}\n`);
+    } else if (request.op === "set_draft") {
+      ui?.setEditorText?.(request.text ?? "");
+      conn.end(`${JSON.stringify({ ok: Boolean(ui?.setEditorText) })}\n`);
+    } else if (request.op === "subscribe") {
+      shared.subscribers.add(conn);
+      conn.write(`${JSON.stringify(shared.live)}\n`);
+    } else {
+      conn.end(`${JSON.stringify({ error: "unknown op" })}\n`);
+    }
+  };
   const server = createServer((conn) => {
     let buffer = "";
     conn.setEncoding("utf8");
@@ -61,76 +129,15 @@ export default function (pi: Pi): void {
         }
       }
     });
-    conn.on("close", () => subscribers.delete(conn));
-    conn.on("error", () => subscribers.delete(conn));
+    conn.on("close", () => shared.subscribers.delete(conn));
+    conn.on("error", () => shared.subscribers.delete(conn));
   });
-  const handle = (conn: Socket, request: { op?: string; text?: string }) => {
-    if (request.op === "get_draft") {
-      conn.end(`${JSON.stringify({ draft: ctx?.ui?.getEditorText?.() ?? "" })}\n`);
-    } else if (request.op === "set_draft") {
-      ctx?.ui?.setEditorText?.(request.text ?? "");
-      conn.end(`${JSON.stringify({ ok: Boolean(ctx?.ui?.setEditorText) })}\n`);
-    } else if (request.op === "subscribe") {
-      subscribers.add(conn);
-      conn.write(`${JSON.stringify(live)}\n`);
-    } else {
-      conn.end(`${JSON.stringify({ error: "unknown op" })}\n`);
-    }
-  };
-  server.listen(socketPath);
+  rmSync(shared.socketPath, { force: true });
+  server.listen(shared.socketPath);
   server.unref();
-
-  const report = (c: Ctx) => {
-    ctx = c;
-    const file = c.sessionManager?.getSessionFile?.();
-    if (file) run("session", file, socketPath);
-  };
-  const set = (state: string) => () => run("state", state);
-
-  pi.on("session_start", (_, c) => report(c));
-  pi.on("session_switch", (_, c) => report(c));
-  pi.on("agent_start", () => {
-    running = true;
-    run("state", "working");
-  });
-  pi.on("agent_end", () => {
-    running = false;
-    run("state", "done");
-  });
-  pi.on("input", (event) => {
-    const text = event.text?.trim();
-    // Slash commands and !bash run right away instead of queueing.
-    if (running && text && !/^[/!]/.test(text)) push({ queued: [...live.queued, text] });
-  });
-  pi.on("before_agent_start", (event) => {
-    const prompt = event.prompt ?? "";
-    if (live.queued.some((q) => prompt.includes(q))) push({ queued: live.queued.filter((q) => !prompt.includes(q)) });
-  });
-  pi.on("tool_approval_requested", set("blocked"));
-  pi.on("tool_approval_resolved", set("working"));
-  pi.on("message_update", (event) => {
-    if (event.message?.role !== "assistant") return;
-    const blocks = event.message.content ?? [];
-    const text = blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n\n");
-    push({ text, thinking: blocks.at(-1)?.type === "thinking", streaming: true });
-  });
-  pi.on("message_end", (event) => {
-    if (event.message?.role === "assistant") push({ text: "", thinking: false, streaming: false });
-  });
-  pi.on("tool_execution_start", (event) => {
-    push({ tool: event.toolName ?? "tool" });
-    // The ask tool waits for the user's answer.
-    if (event.toolName === "ask") run("state", "blocked");
-  });
-  pi.on("tool_execution_end", (event) => {
-    push({ tool: "" });
-    if (event.toolName === "ask") run("state", "working");
-  });
-  pi.on("session_shutdown", () => {
-    server.close();
-    rmSync(socketPath, { force: true });
-    run("state", "clear");
-  });
+  // Normal exits only: a pane killed from the dashboard (SIGHUP) leaves a stale file, which the dashboard ignores.
+  process.on("exit", () => rmSync(shared.socketPath, { force: true }));
+  return shared;
 }
 
 // Panes opened before the plugin loaded lack TMUX_AGENTS; the server's global environment has it.

@@ -20,7 +20,7 @@ from textual.widgets.option_list import Option
 
 from tmux_agents import agent_socket
 from tmux_agents.chat import ChatLog
-from tmux_agents.transcript import to_blocks
+from tmux_agents.transcript import title, to_blocks
 
 # Same glyphs and default colors as the status bar counters; working agents spin instead.
 STATE_STYLES = {"done": ("○", "green"), "working": ("⦿", "yellow"), "blocked": ("●", "red")}
@@ -36,6 +36,8 @@ class Agent(NamedTuple):
     path: str
     transcript: str
     socket: str
+    unread: str
+    title: str
 
     @property
     def shares_draft(self) -> bool:
@@ -61,6 +63,7 @@ class Dashboard(App):
         Binding("ctrl+r", "reply", "reply"),
         Binding("pageup", "scroll_chat(-1)", "scroll", key_display="pgup/pgdn", priority=True),
         Binding("pagedown", "scroll_chat(1)", show=False, priority=True),
+        Binding("x", "close_agent", "close agent"),
         Binding("escape", "close", "close"),
         # Not priority: while replying, the text area takes q as a letter.
         Binding("q", "close", show=False),
@@ -76,6 +79,7 @@ class Dashboard(App):
         self.frame = 0
         self.shown: tuple | None = None  # what the chat currently shows, to skip identical re-renders
         self.live: dict = {}  # latest live-state snapshot from the highlighted agent's socket
+        self.closing: str | None = None  # pane waiting for a second x to confirm closing it
 
     def compose(self) -> ComposeResult:
         with Horizontal():
@@ -106,15 +110,22 @@ class Dashboard(App):
 
     def _label(self, agent: Agent) -> Text:
         icon, color = STATE_STYLES.get(agent.state, (" ", "default"))
+        note = ""
         if agent.state == "working":
             icon = SPINNER[self.frame % len(SPINNER)]
-        return Text.assemble((icon, color), f" {agent.target} ", (agent.command, "bold"), "\n  ", (agent.path, "dim"))
+        elif agent.state == "blocked":
+            note = " needs input"
+        elif agent.unread:
+            icon, note = "●", " finished"
+        name = agent.title or agent.command
+        details = f"{agent.target} · {agent.command} · {agent.path}"
+        return Text.assemble((icon, color), " ", (name, "bold"), (note, color), "\n  ", (details, "dim"))
 
     async def action_reload(self) -> None:
         agents: dict[str, Agent] = {}
         for line in self._main("list_agents").splitlines():
-            fields = (line.split("\t") + [""] * 7)[:7]
-            agents[fields[0]] = Agent(*fields)
+            fields = (line.split("\t") + [""] * 8)[:8]
+            agents[fields[0]] = Agent(*fields, title=title(fields[5]) if fields[5] else "")
         if agents == self.agents:
             return
         listing = self.query_one(OptionList)
@@ -131,6 +142,8 @@ class Dashboard(App):
 
     def _on_agent_changed(self, previous: Agent | None) -> None:
         agent = self._agent
+        if not agent or agent.pane != self.closing:
+            self.closing = None
         if previous and agent and (previous.pane, previous.socket) == (agent.pane, agent.socket):
             return
         self.workers.cancel_group(self, "live")
@@ -188,6 +201,8 @@ class Dashboard(App):
         agent = self._agent
         if agent is None:
             return ""
+        if self.closing == agent.pane:
+            return Text.assemble(("press x again to stop this agent and close its pane, esc to cancel", "red"))
         if not agent.transcript:
             return Text.assemble(("no session reported: restart the agent after installing the hooks", "dim"))
         if agent.state == "blocked":
@@ -250,6 +265,17 @@ class Dashboard(App):
         chat = self.query_one(ChatLog)
         chat.scroll_relative(y=direction * max(1, chat.size.height // 2), animate=False)
 
+    async def action_close_agent(self) -> None:
+        agent = self._agent
+        if agent is None:
+            return
+        if self.closing != agent.pane:
+            self.closing = agent.pane  # the status line asks for confirmation
+            return
+        self.closing = None
+        self._main("close_agent", agent.pane)
+        await self.action_reload()
+
     def _close_reply(self) -> None:
         reply = self.query_one(TextArea)
         reply.text = ""
@@ -258,7 +284,9 @@ class Dashboard(App):
 
     async def action_close(self) -> None:
         reply, agent = self.query_one(TextArea), self._agent
-        if reply.display:
+        if self.closing:
+            self.closing = None
+        elif reply.display:
             if agent and agent.shares_draft:
                 await self._set_draft(agent, reply.text)  # keep the edits as the agent's draft
             self._close_reply()
