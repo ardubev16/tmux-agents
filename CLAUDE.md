@@ -15,7 +15,8 @@ See README.md for user-facing usage, keybindings, and configuration options.
   `new_worktree`/`pick_worktree`, the dashboard's `list_agents`/`switch_agent`/…). Popups run
   `main.sh <subcommand>` directly, so no state is passed back through temp files or exit codes.
   `dashboard` downloads the binary released for `version` (bumped by release-please) into `bin/`, then
-  execs it; try local Go changes with `go run ./cmd/tmux-agents "$PWD/main.sh"`.
+  execs it; with `@tmux_agents_dashboard_build on` it builds `bin/tmux-agents-local` from the checkout
+  instead, rebuilding when the Go sources change.
   Per-pane options: `@tmux_agents_state`, plus what `session` reports: the agent's session
   file (`@tmux_agents_transcript`) and, for omp, its socket (`@tmux_agents_socket`).
   `@tmux_agents_unread` marks a pane that finished while not visible; tmux hooks set in

@@ -140,6 +140,9 @@ set -g @tmux_agents_worktree_command ''
 set -g @tmux_agents_key_dashboard 'O'
 set -g @tmux_agents_key_worktree 'W'
 
+# Build the dashboard from this checkout with Go instead of downloading the release (for working on the plugin)
+set -g @tmux_agents_dashboard_build 'off'
+
 # Show error details
 set -g @tmux_agents_debug 'off'
 ```

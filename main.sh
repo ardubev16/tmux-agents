@@ -153,9 +153,20 @@ function agent_dashboard() {
 }
 
 # Popup body: runs the dashboard released with this version of the plugin, downloading it on first use and after
-# an update. (To try local changes: `go run ./cmd/tmux-agents "$PWD/main.sh"`.)
+# an update. With @tmux_agents_dashboard_build 'on', builds it from this checkout with Go instead (and again
+# whenever the Go sources change), for working on the plugin itself.
 function dashboard() {
-    local -r dir="$(dirname "$MAIN")/bin"
+    local -r root="$(dirname "$MAIN")"
+    local -r dir="$root/bin"
+    if [[ $(tmux_option @tmux_agents_dashboard_build off) == on ]]; then
+        local -r built="$dir/tmux-agents-local"
+        if [[ ! -x $built || -n $(find "$root/cmd" "$root/internal" "$root/go.mod" "$root/go.sum" -newer "$built" -print -quit) ]]; then
+            echo "Building the dashboard…"
+            mkdir -p "$dir"
+            (cd "$root" && go build -o "$built" ./cmd/tmux-agents) || die "tmux-agents: building the dashboard failed."
+        fi
+        exec "$built" "$MAIN"
+    fi
     local -r bin="$dir/tmux-agents-$version"
     if [[ ! -x $bin ]]; then
         local os arch

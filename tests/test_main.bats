@@ -128,3 +128,32 @@ EOF
     [[ "$output" == "dashboard $plugin/main.sh" ]]
     run ! grep -q curl "$LOG"
 }
+
+@test "dashboard with @tmux_agents_dashboard_build on: builds from the checkout, rebuilds after source changes" {
+    local -r plugin="$BATS_TEST_TMPDIR/plugin"
+    mkdir -p "$plugin/cmd" "$plugin/internal"
+    touch "$plugin/go.mod" "$plugin/go.sum"
+    cp -r "$(dirname "$MAIN")/main.sh" "$(dirname "$MAIN")/scripts" "$plugin/"
+    printf '#!/bin/sh\necho "tmux $*" >>"$LOG"\ncase "$*" in *@tmux_agents_dashboard_build*) echo on ;; esac\n' \
+        >"$BATS_TEST_TMPDIR/bin/tmux"
+    cat >"$BATS_TEST_TMPDIR/bin/go" <<'EOF'
+#!/bin/sh
+echo "go $*" >>"$LOG"
+printf '#!/bin/sh\necho "dashboard $*"\n' >"$3"
+chmod +x "$3"
+EOF
+    printf '#!/bin/sh\necho "curl $*" >>"$LOG"; exit 1\n' >"$BATS_TEST_TMPDIR/bin/curl"
+    chmod +x "$BATS_TEST_TMPDIR/bin/"*
+
+    run "$plugin/main.sh" dashboard
+    [[ "$output" == *"dashboard $plugin/main.sh" ]]
+    [ "$(grep -c '^go build' "$LOG")" = 1 ]
+
+    run "$plugin/main.sh" dashboard # nothing changed: no rebuild
+    [ "$(grep -c '^go build' "$LOG")" = 1 ]
+
+    sleep 1 && touch "$plugin/cmd/main.go"
+    run "$plugin/main.sh" dashboard
+    [ "$(grep -c '^go build' "$LOG")" = 2 ]
+    run ! grep -q '^curl' "$LOG"
+}
