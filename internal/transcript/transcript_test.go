@@ -132,4 +132,24 @@ func TestTitles(t *testing.T) {
 	}
 }
 
+func TestQuestionsShowWithoutPrefilledAnswers(t *testing.T) {
+	form := `<form><p>Sessions live in <code>memory</code>.</p><fieldset><legend>Session store</legend>
+<label><input type="radio" name="store" value="sqlite" checked> SQLite</label>
+<label><input type="radio" name="store" value="redis"> Redis</label></fieldset>
+<label>Lifetime <input type="number" name="ttl" value="30"></label><textarea name="notes">my guess</textarea></form>`
+	claude := m{"questions": []any{m{"question": "Fix it too?", "options": []any{m{"label": "Yes", "description": "same pass"}, m{"label": "No"}}}}}
+	path := writeJSONL(t, "q.jsonl",
+		omp("1", nil, "assistant", m{"type": "toolCall", "name": "ask", "arguments": m{"i": "Choosing", "html": form}}),
+		m{"type": "assistant", "uuid": "2", "parentUuid": "1", "message": m{"role": "assistant", "content": []any{m{"type": "tool_use", "name": "AskUserQuestion", "input": claude}}}})
+	want := []string{
+		"- `ask` Choosing",
+		"**Question**\n\nSessions live in `memory`.\n\n**Session store**\n\n- SQLite\n- Redis\n- Lifetime",
+		"- `AskUserQuestion`",
+		"**Question**\n\nFix it too?\n\n- Yes — same pass\n- No",
+	}
+	if got := all(t, path); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
 func itoa(i int) string { b, _ := json.Marshal(i); return string(b) }

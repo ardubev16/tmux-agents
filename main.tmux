@@ -15,6 +15,7 @@ declare -r background_config='@tmux_agents_status_background'
 declare -r done_foreground_config='@tmux_agents_status_done_foreground'
 declare -r working_foreground_config='@tmux_agents_status_working_foreground'
 declare -r blocked_foreground_config='@tmux_agents_status_blocked_foreground'
+declare -r hide_zero_config='@tmux_agents_status_hide_zero'
 
 function tmux_option() {
     local -r option=$(tmux show-option -gqv "$1")
@@ -47,9 +48,10 @@ function init_tmux_agents_status() {
         background=$(tmux_option "$background_config" "colour238") \
         done_foreground=$(tmux_option "$done_foreground_config" "green") \
         working_foreground=$(tmux_option "$working_foreground_config" "yellow") \
-        blocked_foreground=$(tmux_option "$blocked_foreground_config" "red")
+        blocked_foreground=$(tmux_option "$blocked_foreground_config" "red") \
+        hide_zero=$(tmux_option "$hide_zero_config" "off")
 
-    local -r agents_status="#[default]#[bg=$background]#(\"$CURRENT_DIR/main.sh\" status_bar \"$done_foreground\" \"$working_foreground\" \"$blocked_foreground\")#[default]"
+    local -r agents_status="#[default]#[bg=$background]#(\"$CURRENT_DIR/main.sh\" status_bar \"$done_foreground\" \"$working_foreground\" \"$blocked_foreground\" \"$hide_zero\")#[default]"
 
     local -r status_left_value="$(tmux_option "status-left")"
     tmux set-option -gq "status-left" "${status_left_value/$agents_status_placeholder/$agents_status}"

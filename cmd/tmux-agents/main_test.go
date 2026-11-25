@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,7 +88,7 @@ func fakeMain(t *testing.T, socket string) (string, func() []string) {
 printf '%%s\n' "$*" >>'%[1]s'
 case "$1" in
 list_agents)
-    printf '%%%%1\tblocked\ts:1.0\tclaude\t~/a\t\t\t\n'
+    printf '%%%%1\tblocked\ts:1.0\tclaude\t~/a\t\t\t\t%%s\n' "$(( $(date +%%s) - 180 ))"
     printf '%%%%2\tworking\ts:2.0\tomp\t~/b\t%[2]s\t%[3]s\t\n'
     grep -q '^close_agent %%3' '%[1]s' || printf '%%%%3\tdone\ts:3.0\tomp\t~/c\t\t\t1\n' ;;
 esac
@@ -151,9 +152,12 @@ func TestListIsGroupedAndShowsNamesAndWhatNeedsYou(t *testing.T) {
 	}
 	want := []string{"Waiting", "● claude needs input", "Running", "Fix the bug", "Idle", "● omp finished"}
 	for i := range want {
-		if i >= len(lines) || !strings.HasSuffix(lines[i], want[i]) {
+		if i >= len(lines) || !strings.Contains(lines[i], want[i]) {
 			t.Fatalf("rows %q, want %q", lines, want)
 		}
+	}
+	if !strings.HasSuffix(lines[1], " 3m") {
+		t.Errorf("time in state missing: %q", lines[1])
 	}
 	m.agents = m.agents[:1] // no running or idle agents: no empty sections
 	if rows, _ := m.listRows(); len(rows) != 3 {
@@ -197,6 +201,38 @@ func TestBlockedAgentReplyTypesIntoThePane(t *testing.T) {
 	press(m, "ctrl+r", "y", "e", "s", "enter")
 	if !contains(calls(), "reply_agent %1 yes") {
 		t.Errorf("calls %q", calls())
+	}
+}
+
+func TestFilterNarrowsTheList(t *testing.T) {
+	m, _, _ := newModel(t, "")
+	press(m, "/", "o", "m", "p")
+	if len(m.agents) != 2 || m.agents[0].command != "omp" {
+		t.Fatalf("filtered to %+v", m.agents)
+	}
+	press(m, "enter", "esc") // keep it, then clear it outside the input
+	if len(m.agents) != 3 || m.filtering {
+		t.Errorf("after esc: %d agents, filtering=%v", len(m.agents), m.filtering)
+	}
+}
+
+func TestChangesSummarizesTheDiff(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) {
+		if out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+	}
+	git("init", "-q")
+	os.WriteFile(filepath.Join(dir, "a"), []byte("1\n2\n"), 0o644)
+	git("add", "a")
+	git("commit", "-qm", "init")
+	if got := changes(dir); got != "" {
+		t.Errorf("clean tree: %q", got)
+	}
+	os.WriteFile(filepath.Join(dir, "a"), []byte("1\nchanged\nadded\n"), 0o644)
+	if got := changes(dir); got != "1 file +2 −1" {
+		t.Errorf("got %q", got)
 	}
 }
 

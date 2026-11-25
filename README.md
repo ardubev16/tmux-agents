@@ -55,17 +55,21 @@ visible unless `allow-passthrough` is `all`; the plugin's notification covers th
 
 | Key          | Action                                                                                                                       |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `prefix + O` | Agent dashboard ("overview") popup: agents on the left, the highlighted agent's chat on the right, both updating live. `Enter` switch to it, `Ctrl-r` reply, `PgUp`/`PgDn` scroll the chat (scrolling to the top loads older messages), `x` twice close the agent, `q`/`Esc` close |
-| `prefix + W` | Pick a branch (fzf), create or reuse its worktree, and switch to a tmux session rooted there (reuses any session already there) |
+| `prefix + O` | Agent dashboard ("overview") popup: agents on the left, the highlighted agent's chat on the right, both updating live. `Enter` switch to it, `Ctrl-r` reply, `/` filter the list, `Tab` open lazygit in the agent's folder, `PgUp`/`PgDn` scroll the chat (scrolling to the top loads older messages), `x` twice close the agent, `q`/`Esc` close |
+| `prefix + W` | Pick a branch (fzf), create or reuse its worktree, and switch to a tmux session rooted there (reuses any session already there). `Ctrl-x` on a branch removes its worktree and the sessions rooted there instead |
 
 Agents are listed by the session name their harness gave them, in three sections (empty ones are hidden):
 **Waiting** for your input, **Idle**, and **Running**. Idle agents that finished while you were not looking at
-their pane are marked **finished** until you visit it. Closing an agent (`x`, then `x` again to confirm) stops the harness like a normal exit
+their pane are marked **finished** until you visit it. Each agent shows how long it has been in its state (e.g. `12m`).
+`/` filters the list by name, pane or folder (`Enter` keeps the filter, `Esc` clears it). Closing an agent (`x`, then `x` again to confirm) stops the harness like a normal exit
 (SIGTERM: omp and Claude Code run their shutdown hooks and save the session), then closes its pane.
 
 The chat is rendered from the agent's session file, so it wraps to the popup width (prose, code and tables) and
 stays visible while the agent's pane shows something else, e.g. `$EDITOR` on a long prompt. Only agents whose
-hooks report a session (the bundled omp and Claude Code integrations) show a chat.
+hooks report a session (the bundled omp and Claude Code integrations) show a chat. Questions an agent asks you (omp's
+`ask`, Claude Code's `AskUserQuestion`) show in the chat as the question and its choices, without the answers the
+agent prefilled. The header shows the agent folder's uncommitted changes (e.g. `3 files +40 −12`, tracked files
+only); `Tab` opens [lazygit](https://github.com/jesseduffield/lazygit) there and returns to the dashboard when you quit it.
 
 The dashboard uses your terminal's colorscheme. omp agents also stream their in-progress reply, current activity
 (thinking, running a tool) and prompts queued while they work (shown as *queued* until delivered) into the
@@ -76,12 +80,13 @@ agent waiting on a dialog, a reply types your text followed by `Enter` into the 
 
 Worktrees go to `<project>/.worktrees/<repo>/<branch>`, where `<project>` is the folder that contains the repo
 (e.g. `~/Repos/work/.worktrees/api/feat-x`). If the branch is already checked out somewhere, that checkout is
-reused. A branch that doesn't exist yet is created from the current `HEAD`.
+reused. A branch that doesn't exist yet is created from the current `HEAD`. Removing a worktree (`Ctrl-x` in the
+picker) keeps its branch; git refuses when the worktree has uncommitted changes, and the main checkout is never removed.
 
 ## Installation
 
-Dependencies: `git`, `fzf`, `jq`, `notify-send` (optional, desktop notifications), [Go](https://go.dev/dl/) (the
-dashboard is built on its first launch), tmux ≥ 3.2 (popups).
+Dependencies: `git`, `fzf`, `jq`, `notify-send` (optional, desktop notifications), `lazygit` (optional, the
+dashboard's `Tab`), [Go](https://go.dev/dl/) (the dashboard is built on its first launch), tmux ≥ 3.2 (popups).
 
 ### Tmux Plugin Manager (recommended)
 
@@ -114,6 +119,9 @@ set -g @tmux_agents_status_background 'colour238'
 set -g @tmux_agents_status_done_foreground 'green'
 set -g @tmux_agents_status_working_foreground 'yellow'
 set -g @tmux_agents_status_blocked_foreground 'red'
+
+# Leave out counters at 0 (nothing shows while no agent runs)
+set -g @tmux_agents_status_hide_zero 'off'
 
 # Notify when an agent becomes done/blocked off screen: 'system' (desktop, falls back to tmux), 'tmux', 'off'
 set -g @tmux_agents_notify 'system'

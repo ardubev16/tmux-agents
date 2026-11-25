@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/ardubev16/tmux-agents/internal/chat"
 	"github.com/ardubev16/tmux-agents/internal/transcript"
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -47,14 +49,16 @@ var groups = map[string]string{"blocked": "Waiting", "done": "Idle", "working": 
 
 type agent struct {
 	pane, state, target, command, path, transcript, socket, unread, title string
+	since                                                                 int64 // epoch seconds the state began, 0 = unknown
 }
 
 // A blocked agent shows a dialog, so a reply answers it instead of touching the draft.
 func (a agent) sharesDraft() bool { return a.socket != "" && a.state != "blocked" }
 
 type (
-	tickMsg struct{}
-	liveMsg struct {
+	tickMsg     struct{}
+	lazygitDone struct{ err error }
+	liveMsg     struct {
 		gen  int
 		live *agentsocket.Live // nil: the subscription ended
 	}
@@ -64,11 +68,17 @@ type model struct {
 	mainSh string
 	send   func(tea.Msg)
 
+	all      []agent // as list_agents reports them; agents is what the filter lets through
 	agents   []agent
 	selected int
 	listTop  int // first visible row of the agent list
 	frame    int
 	closing  string // pane waiting for a second x to confirm closing it
+	changes  string // the highlighted agent's uncommitted changes, e.g. "3 files +40 −12"
+	notice   string // an error to show until the next key
+
+	filtering bool
+	filter    textinput.Model
 
 	chat        chat.Chat
 	transcripts map[string]*transcript.Transcript // by path, so polls only parse appended lines
@@ -107,25 +117,39 @@ func (m *model) Init() tea.Cmd {
 }
 
 func (m *model) reload() {
-	previous := m.agent()
-	var prevPane, prevSocket string
-	if previous != nil {
-		prevPane, prevSocket = previous.pane, previous.socket
-	}
-	var agents []agent
+	m.all = nil
 	for _, line := range strings.Split(strings.TrimRight(m.main("list_agents"), "\n"), "\n") {
 		if line == "" {
 			continue
 		}
-		f := append(strings.Split(line, "\t"), make([]string, 8)...)
+		f := append(strings.Split(line, "\t"), make([]string, 9)...)
 		a := agent{pane: f[0], state: f[1], target: f[2], command: f[3], path: f[4], transcript: f[5], socket: f[6], unread: f[7]}
+		a.since, _ = strconv.ParseInt(f[8], 10, 64)
 		if a.transcript != "" {
 			a.title = transcript.Title(a.transcript)
 		}
-		agents = append(agents, a)
+		m.all = append(m.all, a)
 	}
-	m.agents, m.selected = agents, 0
-	for i, a := range agents {
+	m.applyFilter()
+	if a := m.agent(); a != nil {
+		m.changes = changes(a.path)
+	}
+}
+
+// applyFilter lists the agents matching the filter, keeping the highlighted one when it still matches.
+func (m *model) applyFilter() {
+	var prevPane, prevSocket string
+	if previous := m.agent(); previous != nil {
+		prevPane, prevSocket = previous.pane, previous.socket
+	}
+	query := strings.ToLower(m.filter.Value())
+	m.agents, m.selected = nil, 0
+	for _, a := range m.all {
+		if strings.Contains(strings.ToLower(strings.Join([]string{name(a), a.target, a.command, a.path}, " ")), query) {
+			m.agents = append(m.agents, a)
+		}
+	}
+	for i, a := range m.agents {
 		if a.pane == prevPane {
 			m.selected = i
 		}
@@ -135,10 +159,47 @@ func (m *model) reload() {
 	}
 }
 
+// changes sums up the uncommitted changes to tracked files in dir, e.g. "3 files +40 −12"; "" when there are
+// none or dir is not in a git repo.
+func changes(dir string) string {
+	cmd := exec.Command("git", "-C", dir, "diff", "--shortstat", "HEAD")
+	cmd.Env = append(os.Environ(), "LC_ALL=C") // the summary is parsed, so not translated
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	var files, added, deleted int
+	for _, part := range strings.Split(strings.TrimSpace(string(out)), ", ") {
+		var n int
+		var what string
+		fmt.Sscanf(part, "%d %s", &n, &what)
+		switch {
+		case strings.HasPrefix(what, "file"):
+			files = n
+		case strings.HasPrefix(what, "insertion"):
+			added = n
+		case strings.HasPrefix(what, "deletion"):
+			deleted = n
+		}
+	}
+	if files == 0 {
+		return ""
+	}
+	noun := "files"
+	if files == 1 {
+		noun = "file"
+	}
+	return fmt.Sprintf("%d %s +%d −%d", files, noun, added, deleted)
+}
+
 func (m *model) agentChanged() {
 	a := m.agent()
 	if a == nil || a.pane != m.closing {
 		m.closing = ""
+	}
+	m.changes = ""
+	if a != nil {
+		m.changes = changes(a.path)
 	}
 	if m.stop != nil {
 		close(m.stop)
@@ -235,11 +296,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.chat.Update(nil, m.liveMarkdown(), m.chat.More)
 		}
+	case lazygitDone:
+		if msg.err != nil {
+			m.notice = "lazygit: " + msg.err.Error()
+		}
+		m.reload()
 	case tea.MouseMsg:
 		return m, m.mouse(msg)
 	case tea.KeyMsg:
-		if m.replying {
+		m.notice = ""
+		switch {
+		case m.replying:
 			return m, m.replyKey(msg)
+		case m.filtering:
+			return m, m.filterKey(msg)
 		}
 		return m, m.key(msg)
 	}
@@ -313,16 +383,50 @@ func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 				go cmd.Wait()
 			}
 		}
-	case "esc":
-		if m.closing != "" {
-			m.closing = ""
-			return nil
+	case "/":
+		m.filtering = true
+		return m.filter.Focus()
+	case "tab":
+		if a := m.agent(); a != nil {
+			cmd := exec.Command("lazygit")
+			cmd.Dir = a.path
+			return tea.ExecProcess(cmd, func(err error) tea.Msg { return lazygitDone{err} })
 		}
-		return tea.Quit
+	case "esc":
+		switch {
+		case m.closing != "":
+			m.closing = ""
+		case m.filter.Value() != "":
+			m.filter.SetValue("")
+			m.applyFilter()
+		default:
+			return tea.Quit
+		}
+		return nil
 	case "q", "ctrl+c":
 		return tea.Quit
 	}
 	return nil
+}
+
+// filterKey edits the filter while it has focus: enter keeps it, esc clears it, up/down still move.
+func (m *model) filterKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc":
+		m.filter.SetValue("")
+		fallthrough
+	case "enter":
+		m.filtering = false
+		m.filter.Blur()
+		m.applyFilter()
+		return nil
+	case "up", "down":
+		return m.key(msg)
+	}
+	var cmd tea.Cmd
+	m.filter, cmd = m.filter.Update(msg)
+	m.applyFilter()
+	return cmd
 }
 
 func (m *model) setDraft(a *agent, text string) bool {
@@ -390,12 +494,40 @@ func name(a agent) string {
 	return a.command
 }
 
-func details(a agent) string { return fmt.Sprintf("%s · %s · %s", a.target, a.command, a.path) }
+func details(a agent) string {
+	return fmt.Sprintf("%s · %s · %s", a.target, a.command, shortPath(a.path))
+}
+
+// shortPath writes the home folder as ~.
+func shortPath(path string) string {
+	if home, err := os.UserHomeDir(); err == nil && (path == home || strings.HasPrefix(path, home+"/")) {
+		return "~" + path[len(home):]
+	}
+	return path
+}
+
+// ago is how long ago since (epoch seconds) was, in its largest unit: 45s, 12m, 3h, 2d.
+func ago(since int64, now time.Time) string {
+	d := max(0, now.Sub(time.Unix(since, 0)))
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", d/time.Second)
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", d/time.Minute)
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", d/time.Hour)
+	}
+	return fmt.Sprintf("%dd", d/(24*time.Hour))
+}
 
 // listRows renders the agent list: a header per non-empty section, two lines per agent, the selected one
 // highlighted. owners maps each row to its agent, -1 for headers.
 func (m *model) listRows() (rows []string, owners []int) {
 	width, group := m.listWidth(), ""
+	if m.filtering || m.filter.Value() != "" {
+		rows, owners = append(rows, ansi.Truncate(" "+m.filter.View(), width, "…")), append(owners, -1)
+	}
+	now := time.Now()
 	for i, a := range m.agents {
 		if g := groups[a.state]; g != group {
 			group = g
@@ -419,10 +551,15 @@ func (m *model) listRows() (rows []string, owners []int) {
 			icon, note = "●", " finished"
 		}
 		color := base.Foreground(style.color)
-		lines := []string{
-			base.Render(" ") + color.Render(icon) + base.Render(" ") + base.Bold(true).Render(name(a)) + color.Render(note),
-			base.Render("   ") + base.Faint(true).Render(details(a)),
+		// How long the agent has been in this state, at the right edge.
+		since := ""
+		if a.since > 0 {
+			since = base.Faint(true).Render(ago(a.since, now) + " ")
 		}
+		first := base.Render(" ") + color.Render(icon) + base.Render(" ") + base.Bold(true).Render(name(a)) + color.Render(note)
+		first = ansi.Truncate(first, max(0, width-ansi.StringWidth(since)), base.Render("…"))
+		first += base.Render(strings.Repeat(" ", max(0, width-ansi.StringWidth(first)-ansi.StringWidth(since)))) + since
+		lines := []string{first, base.Render("   ") + base.Faint(true).Render(details(a))}
 		for _, line := range lines {
 			line = ansi.Truncate(line, width, base.Render("…"))
 			rows = append(rows, line+base.Render(strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))))
@@ -455,12 +592,18 @@ func (m *model) header() string {
 	if a == nil {
 		return ""
 	}
-	return ansi.Truncate(bold.Render(name(*a))+"  "+dim.Render(details(*a)), m.rightWidth(), "…")
+	head := bold.Render(name(*a)) + "  " + dim.Render(details(*a))
+	if m.changes != "" {
+		head += "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render(m.changes)
+	}
+	return ansi.Truncate(head, m.rightWidth(), "…")
 }
 
 func (m *model) status() string {
 	a := m.agent()
 	switch {
+	case m.notice != "":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(m.notice)
 	case a == nil:
 		return ""
 	case m.closing == a.pane:
@@ -514,9 +657,12 @@ func (m *model) View() string {
 	}
 	sep := border.Render(strings.Repeat("│\n", body-1) + "│")
 	main := lipgloss.JoinHorizontal(lipgloss.Top, list, sep, " ", strings.Join(right, "\n"))
-	help := "↑↓ select · ⏎ switch · ^r reply · pgup/pgdn scroll · x close agent · q/esc close"
-	if m.replying {
+	help := "↑↓ select · ⏎ switch · ^r reply · / filter · tab lazygit · pgup/pgdn scroll · x close agent · q/esc close"
+	switch {
+	case m.replying:
 		help = "⏎ send · ^j newline · esc keep as draft"
+	case m.filtering:
+		help = "type to filter by name, pane or folder · ↑↓ select · ⏎ keep · esc clear"
 	}
 	return main + "\n" + dim.Render(ansi.Truncate(help, m.width, "…"))
 }
@@ -530,7 +676,9 @@ func newDashboard(mainSh string) *model {
 	// Ctrl+arrows jump by word too, like in shells and editors (the defaults only bind Alt).
 	reply.KeyMap.WordBackward.SetKeys("alt+left", "alt+b", "ctrl+left")
 	reply.KeyMap.WordForward.SetKeys("alt+right", "alt+f", "ctrl+right")
-	return &model{mainSh: mainSh, transcripts: map[string]*transcript.Transcript{}, wanted: chatBlocks, reply: reply}
+	filter := textinput.New()
+	filter.Prompt = "/ "
+	return &model{mainSh: mainSh, transcripts: map[string]*transcript.Transcript{}, wanted: chatBlocks, reply: reply, filter: filter}
 }
 
 func main() {

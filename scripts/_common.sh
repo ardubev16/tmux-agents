@@ -43,7 +43,8 @@ function repo_root() {
     dirname "$git_dir"
 }
 
-# Prints the picked branch, or the typed query for a new one; fails when cancelled (Esc/Ctrl-C).
+# Prints "open <branch>" for the picked branch or the typed query (a new branch), "remove <branch>" when
+# ctrl-x was pressed on one; fails when cancelled (Esc/Ctrl-C).
 function select_branch() {
     local branches fzf_out
     branches=$(git -C "$1" branch)
@@ -52,14 +53,23 @@ function select_branch() {
     fzf_out=$({
         grep '^\*' <<<"$branches"
         grep -v '^\*' <<<"$branches"
-    } | fzf --print-query --prompt="⎇ branch: ") || [[ $? == 1 ]] || return 1
+    } | fzf --print-query --expect=ctrl-x --prompt="⎇ branch: " --header="enter: open · ctrl-x: remove its worktree") ||
+        [[ $? == 1 ]] || return 1
 
-    local -r query=$(sed -n '1p' <<<"$fzf_out") selection=$(sed -n '2p' <<<"$fzf_out")
-    if [[ -n $selection ]]; then
-        echo "${selection:2}"
+    local -r query=$(sed -n '1p' <<<"$fzf_out") key=$(sed -n '2p' <<<"$fzf_out") selection=$(sed -n '3p' <<<"$fzf_out")
+    if [[ $key == ctrl-x ]]; then
+        echo "remove ${selection:2}"
+    elif [[ -n $selection ]]; then
+        echo "open ${selection:2}"
     else
-        echo "$query"
+        echo "open $query"
     fi
+}
+
+# Prints the checkout of repo $1 that has branch $2 checked out, if any.
+function worktree_of() {
+    git -C "$1" worktree list --porcelain |
+        awk -v ref="branch refs/heads/$2" '/^worktree /{ wt = substr($0, 10) } $0 == ref { print wt; exit }'
 }
 
 # Prints the checkout path for $branch, creating a worktree under
@@ -70,8 +80,7 @@ function ensure_worktree() {
     repo=$(repo_root "$path")
 
     local existing
-    existing=$(git -C "$repo" worktree list --porcelain |
-        awk -v ref="branch refs/heads/$branch" '/^worktree /{ wt = substr($0, 10) } $0 == ref { print wt; exit }')
+    existing=$(worktree_of "$repo" "$branch")
     if [[ -n $existing ]]; then
         echo "$existing"
         return 0
@@ -87,4 +96,19 @@ function ensure_worktree() {
     fi
 
     echo "$wt_path"
+}
+
+# Removes the worktree that has $branch checked out and prints its path. Never the main checkout; git refuses
+# a worktree with uncommitted changes. Returns explicitly: callers run this in `if`, where errexit does not apply.
+function remove_worktree() {
+    local -r path="$1" branch="$2"
+    local repo wt
+    repo=$(repo_root "$path") || return 1
+    wt=$(worktree_of "$repo" "$branch")
+    if [[ -z $wt || $wt == "$repo" ]]; then
+        echo "$branch has no worktree to remove (the main checkout stays)." >&2
+        return 1
+    fi
+    git -C "$repo" worktree remove "$wt" >&2 || return 1
+    echo "$wt"
 }

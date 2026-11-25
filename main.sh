@@ -10,6 +10,7 @@ declare -r state_option='@tmux_agents_state'
 declare -r transcript_option='@tmux_agents_transcript'
 declare -r socket_option='@tmux_agents_socket'
 declare -r unread_option='@tmux_agents_unread'
+declare -r since_option='@tmux_agents_since'
 
 function tmux_option() {
     local -r option=$(tmux show-option -gqv "$1")
@@ -23,10 +24,13 @@ function set_state() {
 
     if [[ $state == clear ]]; then
         local option
-        for option in "$state_option" "$transcript_option" "$socket_option" "$unread_option"; do
+        for option in "$state_option" "$transcript_option" "$socket_option" "$unread_option" "$since_option"; do
             tmux set-option -pu -t "$TMUX_PANE" "$option"
         done
     else
+        # Hooks repeat a state (Claude Code reports working after every tool): only a change restarts the clock.
+        [[ $(tmux show-option -pqv -t "$TMUX_PANE" "$state_option") == "$state" ]] ||
+            tmux set-option -p -t "$TMUX_PANE" "$since_option" "$EPOCHSECONDS"
         tmux set-option -p -t "$TMUX_PANE" "$state_option" "$state"
     fi
 
@@ -91,28 +95,30 @@ function seen() {
 }
 
 # One agent per line, blocked first, then unread done: pane_id \t state \t target \t command \t path \t
-# transcript \t socket \t unread
+# transcript \t socket \t unread \t since (epoch seconds the state began)
 function list_agents() {
     local -r shell="$(basename "$(tmux show-option -gqv default-shell)")"
     # shortcut: an agent killed without its exit hook keeps its state until its pane is back at the shell prompt.
-    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}	#{$transcript_option}	#{$socket_option}	#{$unread_option}" |
-        awk -F '\t' -v shell="$shell" -v home="$HOME" '
+    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}	#{$transcript_option}	#{$socket_option}	#{$unread_option}	#{$since_option}" |
+        awk -F '\t' -v shell="$shell" '
             BEGIN { OFS = "\t"; rank["blocked"] = 0; rank["done"] = 2; rank["working"] = 3 }
             $2 != "" && $4 != shell {
-                if (index($5, home) == 1 && (length($5) == length(home) || substr($5, length(home) + 1, 1) == "/"))
-                    $5 = "~" substr($5, length(home) + 1)
                 r = ($2 == "done" && $8 != "") ? 1 : rank[$2]
                 print r, $0
             }' |
         sort -s -n -k1,1 | cut -f2-
 }
 
+# hide_zero=on leaves out counters at 0, so nothing shows while no agent runs.
 function status_bar() {
-    local -r done_foreground="$1" working_foreground="$2" blocked_foreground="$3"
+    local -r done_foreground="$1" working_foreground="$2" blocked_foreground="$3" hide_zero="${4:-off}"
     list_agents | awk -F '\t' \
-        -v d="$done_foreground" -v w="$working_foreground" -v b="$blocked_foreground" '
+        -v d="$done_foreground" -v w="$working_foreground" -v b="$blocked_foreground" -v hide="$hide_zero" '
+        function counter(color, glyph, count) {
+            return (hide == "on" && !count) ? "" : sprintf("#[fg=%s] %s %d ", color, glyph, count)
+        }
         { n[$2]++ }
-        END { printf "#[fg=%s] ○ %d #[fg=%s] ⦿ %d #[fg=%s] ● %d ", d, n["done"], w, n["working"], b, n["blocked"] }'
+        END { printf "%s", counter(d, "○", n["done"]) counter(w, "⦿", n["working"]) counter(b, "●", n["blocked"]) }'
 }
 
 function agent_dashboard() {
@@ -169,17 +175,23 @@ function new_worktree() {
     tmux display-popup -d "$current_path" -E "'$MAIN' pick_worktree"
 }
 
-# Popup body: pick a branch, create or reuse its worktree, switch to a session rooted there. Errors stay on
-# screen until a key is pressed (die/the error trap pause in a popup).
+# Popup body: pick a branch, create or reuse its worktree, switch to a session rooted there. ctrl-x on a branch
+# removes its worktree instead, then the picker opens again. Errors stay on screen until a key is pressed
+# (die/the error trap pause in a popup).
 function pick_worktree() {
-    local -r current_path="$PWD"
-    local repo branch
-    repo=$(repo_root "$current_path")
-    branch=$(select_branch "$current_path") || return 0 # cancelled
+    local where="$PWD" repo picked branch
+    repo=$(repo_root "$where")
+    while true; do
+        picked=$(select_branch "$where") || return 0 # cancelled
+        branch=${picked#* }
+        [[ ${picked%% *} == remove ]] || break
+        [[ -z $branch ]] || remove_branch_worktree "$repo" "$branch"
+        where=$repo # the worktree the picker started in may be gone
+    done
     [[ -n $branch ]] || return 0
 
     local wt_path
-    wt_path=$(ensure_worktree "$current_path" "$branch" "$(tmux_option @tmux_agents_worktree_dir "")")
+    wt_path=$(ensure_worktree "$repo" "$branch" "$(tmux_option @tmux_agents_worktree_dir "")")
 
     # Reuse any session already rooted there (e.g. the main checkout opened by a sessionizer).
     local session
@@ -196,6 +208,25 @@ function pick_worktree() {
     fi
 
     tmux switch-client -t "=$session"
+}
+
+# Removes $2's worktree (git refuses one with uncommitted changes) and kills the sessions rooted there; a
+# refusal stays on screen until a key is pressed.
+function remove_branch_worktree() {
+    local wt
+    if ! wt=$(remove_worktree "$1" "$2"); then
+        _pause
+        return 0
+    fi
+    local -r current=$(tmux display-message -p '#{session_id}')
+    local id
+    while read -r id; do
+        # Killing the session this client shows would detach it: move the client elsewhere first.
+        if [[ $id == "$current" ]]; then
+            tmux switch-client -l 2>/dev/null || tmux switch-client -n
+        fi
+        tmux kill-session -t "$id"
+    done < <(tmux list-sessions -F '#{session_path}	#{session_id}' | awk -F '\t' -v path="$wt" '$1 == path { print $2 }')
 }
 
 if [[ $# -lt 1 ]]; then

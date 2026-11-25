@@ -18,13 +18,33 @@ pick() {
         _ "$SCRIPTS_DIR" "$1" "$2" "$REPO"
 }
 
-@test "select_branch: picked branch, typed new branch, cancel" {
-    pick 'quer\n  feat/y\n' 0
-    [ "$output" = feat/y ]
-    pick 'new/z\n' 1
-    [ "$output" = new/z ]
+@test "select_branch: picked branch, typed new branch, ctrl-x, cancel" {
+    pick 'quer\n\n  feat/y\n' 0
+    [ "$output" = "open feat/y" ]
+    pick 'new/z\n\n' 1
+    [ "$output" = "open new/z" ]
+    pick '\nctrl-x\n+ feat/y\n' 0
+    [ "$output" = "remove feat/y" ]
     pick '' 130
     [ "$output" = cancelled ]
+}
+
+@test "remove_worktree: removes a clean worktree, never the main checkout or one with changes" {
+    worktree "$REPO" gone
+    wt="$output"
+    run bash -c '. "$1/_common.sh"; remove_worktree "$2" gone' _ "$SCRIPTS_DIR" "$REPO"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$wt" ]
+    [ ! -e "$wt" ]
+
+    run bash -c '. "$1/_common.sh"; remove_worktree "$2" main || echo refused' _ "$SCRIPTS_DIR" "$REPO"
+    [[ "$output" == *refused ]]
+
+    worktree "$REPO" dirty
+    touch "$output/new-file"
+    run bash -c '. "$1/_common.sh"; remove_worktree "$2" dirty || echo refused' _ "$SCRIPTS_DIR" "$REPO"
+    [[ "$output" == *refused ]]
+    [ -e "$PROJECT/.worktrees/repo/dirty/new-file" ]
 }
 
 @test "new branch: created off HEAD under <project>/.worktrees/<repo>/<branch>" {

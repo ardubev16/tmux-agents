@@ -12,6 +12,9 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 )
 
 // Chunk is how many bytes are read per step when walking back through the file.
@@ -70,6 +73,149 @@ func toolLine(p part) string {
 	return strings.TrimRight(fmt.Sprintf("%s%s` %s", toolPrefix, name, strings.ReplaceAll(summary, "`", "'")), " ")
 }
 
+// question renders what an ask tool asks the user: omp's HTML form or Claude Code's (and older omp's) list of
+// questions. The answers the agent prefilled (checked options, input values, textarea text) are left out.
+func question(p part) string {
+	if p.Name != "ask" && p.Name != "AskUserQuestion" {
+		return ""
+	}
+	args := p.Arguments
+	if args == nil {
+		args = p.Input
+	}
+	var blocks []string
+	if form, ok := args["html"].(string); ok {
+		blocks = formBlocks(form)
+	}
+	questions, _ := args["questions"].([]any)
+	for _, q := range questions {
+		q, _ := q.(map[string]any)
+		if text, _ := q["question"].(string); text != "" {
+			blocks = append(blocks, text)
+		}
+		options, _ := q["options"].([]any)
+		for _, o := range options {
+			o, _ := o.(map[string]any)
+			item, _ := o["label"].(string)
+			if desc, _ := o["description"].(string); desc != "" {
+				item += " — " + desc
+			}
+			blocks = append(blocks, "- "+strings.Join(strings.Fields(item), " "))
+		}
+	}
+	if len(blocks) == 0 {
+		return ""
+	}
+	// The heading also keeps a first item like "- `x`" from passing for a tool line.
+	md := "**Question**"
+	for i, block := range blocks {
+		if i > 0 && strings.HasPrefix(block, "- ") && strings.HasPrefix(blocks[i-1], "- ") {
+			md += "\n" + block // one list
+		} else {
+			md += "\n\n" + block
+		}
+	}
+	return md
+}
+
+// Form elements whose content is an answer (or nothing to read) rather than part of the question.
+var notQuestion = map[atom.Atom]bool{atom.Textarea: true, atom.Script: true, atom.Style: true, atom.Svg: true, atom.Button: true}
+
+// formBlocks turns a form into Markdown blocks: text, legends in bold, choices and fields as list items.
+func formBlocks(form string) []string {
+	doc, err := html.Parse(strings.NewReader(form))
+	if err != nil {
+		return nil
+	}
+	var blocks []string
+	add := func(format, text string) {
+		if text != "" {
+			blocks = append(blocks, fmt.Sprintf(format, text))
+		}
+	}
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		switch {
+		case n.Type == html.TextNode:
+			add("%s", inlineText(n)) // loose text outside any block
+			return
+		case n.Type != html.ElementNode && n.Type != html.DocumentNode, notQuestion[n.DataAtom]:
+			return
+		}
+		switch n.DataAtom {
+		case atom.P, atom.H1, atom.H2, atom.H3, atom.H4, atom.H5, atom.H6:
+			add("%s", inlineText(n))
+			return
+		case atom.Legend:
+			add("**%s**", inlineText(n))
+			return
+		case atom.Li, atom.Option, atom.Tr:
+			add("- %s", inlineText(n))
+			return
+		case atom.Pre:
+			add("```\n%s\n```", strings.Trim(rawText(n), "\n"))
+			return
+		case atom.Label:
+			add("- %s", inlineText(n))
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				if c.DataAtom == atom.Select {
+					walk(c) // its options, below the label
+				}
+			}
+			return
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return blocks
+}
+
+// inlineText is a node's text on one line: code in backticks, table cells apart, selects and answers left out.
+func inlineText(n *html.Node) string {
+	var b strings.Builder
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		switch {
+		case n.Type == html.TextNode:
+			b.WriteString(n.Data)
+			return
+		case n.Type != html.ElementNode || notQuestion[n.DataAtom] || n.DataAtom == atom.Select:
+			return
+		case n.DataAtom == atom.Code:
+			b.WriteString("`" + strings.Join(strings.Fields(rawText(n)), " ") + "`")
+			return
+		case n.DataAtom == atom.Td || n.DataAtom == atom.Th:
+			b.WriteString(" · ")
+		case n.DataAtom == atom.Br:
+			b.WriteString(" ")
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	if n.Type == html.TextNode {
+		walk(n)
+	} else {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	return strings.TrimPrefix(strings.Join(strings.Fields(b.String()), " "), "· ")
+}
+
+func rawText(n *html.Node) string {
+	if n.Type == html.TextNode {
+		return n.Data
+	}
+	var b strings.Builder
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		b.WriteString(rawText(c))
+	}
+	return b.String()
+}
+
 func (e *entry) blocks() []string {
 	if e.IsMeta || e.IsSidechain || e.Message == nil || (e.Type != "message" && e.Type != "user" && e.Type != "assistant") {
 		return nil
@@ -103,6 +249,9 @@ func (e *entry) blocks() []string {
 			out = append(out, t)
 		case "toolCall", "tool_use":
 			out = append(out, toolLine(p))
+			if q := question(p); q != "" {
+				out = append(out, q)
+			}
 		}
 	}
 	return out
