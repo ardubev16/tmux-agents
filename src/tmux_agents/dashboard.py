@@ -3,7 +3,6 @@
 The chat is rendered from the agent's session file, so it reflows to any width and stays
 visible while the agent's pane shows something else (e.g. $EDITOR on a prompt). Agents that
 serve a socket (omp) also stream their in-progress reply and share their prompt draft.
-Agents without a session file fall back to a snapshot of their pane.
 Everything touching tmux goes through main.sh callbacks, so this module stays tmux-free.
 """
 
@@ -15,7 +14,7 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
@@ -48,8 +47,7 @@ class Dashboard(App):
     CSS = """
     #agents { width: 35%; height: 1fr; border: none; border-right: solid $panel; padding: 0; }
     #right { width: 1fr; }
-    #chat, #snapshot { height: 1fr; padding: 0 1; scrollbar-size-vertical: 1; }
-    #screen { width: auto; }
+    #chat { height: 1fr; padding: 0 1; scrollbar-size-vertical: 1; }
     #status { height: 1; padding: 0 1; }
     #reply { display: none; height: auto; max-height: 12; border: tall $accent; }
     """
@@ -80,8 +78,6 @@ class Dashboard(App):
             yield OptionList(id="agents")
             with Vertical(id="right"):
                 yield ChatLog(id="chat")
-                with VerticalScroll(id="snapshot"):
-                    yield Static(id="screen")
                 yield Static(id="status")
                 yield TextArea(id="reply", soft_wrap=True, show_line_numbers=False)
         yield Footer()
@@ -155,33 +151,19 @@ class Dashboard(App):
 
     def _poll_chat(self, force: bool = False) -> None:
         agent = self._agent
-        chat, snapshot = self.query_one(ChatLog), self.query_one("#snapshot")
+        chat = self.query_one(ChatLog)
         # omp creates the session file with the first message; until then the chat is just the live reply.
-        native = bool(agent and agent.transcript)
-        screen = ""
-        if agent and native:
-            stat = os.stat(agent.transcript) if os.path.isfile(agent.transcript) else None
-            key: tuple | None = (agent.pane, stat and (stat.st_mtime_ns, stat.st_size))
-        elif agent:
-            screen = self._main("preview_agent", agent.pane).rstrip("\n")
-            key = (agent.pane, screen)
-        else:
-            key = None
+        transcript = agent.transcript if agent else ""
+        stat = os.stat(transcript) if transcript and os.path.isfile(transcript) else None
+        key = (agent.pane, stat and (stat.st_mtime_ns, stat.st_size)) if agent else None
         if key == self.shown and not force:
             return
         pane_changed = not (self.shown and key and self.shown[0] == key[0])
         self.shown = key
-        chat.display, snapshot.display = native or agent is None, not native and agent is not None
-        if agent and native:
-            live = self.live.get("text", "") if self.live.get("streaming") else ""
-            chat.update(blocks=to_blocks(agent.transcript), live=live)
-        elif agent:
-            self.query_one("#screen", Static).update(Text.from_ansi(screen, no_wrap=True))
-        else:
-            chat.update(blocks=[], live="")
+        live = self.live.get("text", "") if self.live.get("streaming") else ""
+        chat.update(blocks=to_blocks(transcript) if transcript else [], live=live)
         if pane_changed:
             chat.scroll_end(animate=False)
-            snapshot.scroll_end(animate=False)
 
     def _tick(self) -> None:
         """Animates working agents: their list icon and the status line under the chat."""
@@ -196,8 +178,8 @@ class Dashboard(App):
         agent = self._agent
         if agent is None:
             return ""
-        if not self.query_one(ChatLog).display:
-            return Text("no session file reported: showing the pane", "dim")
+        if not agent.transcript:
+            return Text("no session reported: restart the agent after installing the hooks", "dim")
         if agent.state == "blocked":
             return Text("● waiting for you", "red")
         if agent.state != "working":
@@ -254,8 +236,8 @@ class Dashboard(App):
             self.exit()
 
     def action_scroll_chat(self, direction: int) -> None:
-        view = self.query_one(ChatLog) if self.query_one(ChatLog).display else self.query_one("#snapshot")
-        view.scroll_relative(y=direction * max(1, view.size.height // 2), animate=False)
+        chat = self.query_one(ChatLog)
+        chat.scroll_relative(y=direction * max(1, chat.size.height // 2), animate=False)
 
     def _close_reply(self) -> None:
         reply = self.query_one(TextArea)

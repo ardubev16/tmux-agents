@@ -77,10 +77,6 @@ function agent_dashboard() {
     tmux display-popup -w 90% -h 90% -E "'$SCRIPTS_DIR/dashboard.sh' '$MAIN'"
 }
 
-function preview_agent() {
-    tmux capture-pane -e -p -S -1000 -t "$1"
-}
-
 function switch_agent() {
     tmux switch-client -t "$1"
 }

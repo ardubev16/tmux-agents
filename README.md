@@ -56,8 +56,8 @@ tmux default.
 | `prefix + W` | Pick a branch (fzf), create or reuse its worktree, and switch to a tmux session rooted there (reuses any session already there) |
 
 The chat is rendered from the agent's session file, so it wraps to the popup width (prose, code and tables) and
-stays visible while the agent's pane shows something else, e.g. `$EDITOR` on a long prompt. Agents without a
-session file (other harnesses, or agents started before the hooks were installed) show a snapshot of their pane.
+stays visible while the agent's pane shows something else, e.g. `$EDITOR` on a long prompt. Only agents whose
+hooks report a session (the bundled omp and Claude Code integrations) show a chat.
 
 omp agents also stream their in-progress reply and current activity (thinking, running a tool) into the
 dashboard, and share their prompt draft: `Ctrl-r` opens the half-typed prompt for editing, `Enter` submits it,

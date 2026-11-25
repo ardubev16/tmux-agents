@@ -3,7 +3,6 @@ import json
 import tempfile
 from pathlib import Path
 
-from textual.containers import VerticalScroll
 from textual.widgets import Static, TextArea
 
 from tmux_agents.chat import ChatLog
@@ -109,7 +108,7 @@ class FakeAgent:
 
 
 def fake_main(tmp_path: Path, socket: str = "") -> tuple[str, Path]:
-    """A main.sh stand-in: a blocked agent with only a pane, a working one with a long transcript."""
+    """A main.sh stand-in: a blocked agent without a session, a working one with a long transcript."""
     entries = [omp_message(str(i), str(i - 1) if i else None, "assistant", text(f"answer {i}")) for i in range(100)]
     entries.append(omp_message("100", "99", "assistant", text("```\n" + "x" * 300 + "\n```")))
     transcript = write_jsonl(tmp_path / "t.jsonl", entries)
@@ -119,7 +118,6 @@ def fake_main(tmp_path: Path, socket: str = "") -> tuple[str, Path]:
 printf '%s\\n' "$*" >>'{log}'
 case "$1" in
 list_agents) printf '%%1\\tblocked\\ts:1.0\\tclaude\\t~/a\\t\\t\\n%%2\\tworking\\ts:2.0\\tomp\\t~/b\\t{transcript}\\t{socket}\\n' ;;
-preview_agent) echo "screen of $2" ;;
 esac
 """)
     script.chmod(0o755)
@@ -131,16 +129,14 @@ def chat_text(app: Dashboard) -> list[str]:
     return [strip.text.rstrip() for strip in chat._lines]
 
 
-async def test_chat_reflows_to_the_view_and_falls_back_to_the_pane(tmp_path):
+async def test_chat_wraps_to_the_view(tmp_path):
     main_sh, _ = fake_main(tmp_path)
     app = Dashboard(main_sh)
     async with app.run_test(size=(100, 30)) as pilot:
-        snapshot = app.query_one("#snapshot", VerticalScroll)
-        assert snapshot.display and "screen of %1" in str(app.query_one("#screen", Static).render())
+        assert chat_text(app) == []  # no session reported for %1
         await pilot.press("down")
         await pilot.pause()
         chat = app.query_one(ChatLog)
-        assert chat.display and not snapshot.display
         lines = chat_text(app)
         assert "answer 0" in lines[0] and any("answer 99" in line for line in lines)
         # The 300-column code line wraps instead of being cut.
@@ -212,11 +208,3 @@ async def test_enter_switches_and_closes(tmp_path):
         await pilot.press("enter")
     assert "switch_agent %1" in log.read_text().splitlines()
     assert app.return_code == 0
-
-
-async def test_snapshot_view_scrolls_too(tmp_path):
-    main_sh, _ = fake_main(tmp_path)
-    app = Dashboard(main_sh)
-    async with app.run_test() as pilot:
-        await pilot.press("pageup")
-        assert app.query_one("#snapshot", VerticalScroll).display
