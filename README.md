@@ -119,7 +119,7 @@ Options and their defaults:
 
 ```tmux
 # Status bar colors
-set -g @tmux_agents_status_background 'colour238'
+set -g @tmux_agents_status_background 'default'
 set -g @tmux_agents_status_done_foreground 'green'
 set -g @tmux_agents_status_working_foreground 'yellow'
 set -g @tmux_agents_status_blocked_foreground 'red'

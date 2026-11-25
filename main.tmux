@@ -45,7 +45,7 @@ function init_tmux_agents() {
 
 function init_tmux_agents_status() {
     local -r \
-        background=$(tmux_option "$background_config" "colour238") \
+        background=$(tmux_option "$background_config" "default") \
         done_foreground=$(tmux_option "$done_foreground_config" "green") \
         working_foreground=$(tmux_option "$working_foreground_config" "yellow") \
         blocked_foreground=$(tmux_option "$blocked_foreground_config" "red") \
