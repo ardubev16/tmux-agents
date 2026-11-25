@@ -1,2 +1,0 @@
-MD013: false # prose is wrapped by hand at ~110 columns, tables do not wrap
-MD060: false # table rows are too long to align

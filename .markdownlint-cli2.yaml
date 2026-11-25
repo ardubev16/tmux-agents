@@ -1,0 +1,5 @@
+config:
+  MD013: false # prose is wrapped by hand at ~110 columns, tables do not wrap
+  MD060: false # table rows are too long to align
+ignores:
+  - CHANGELOG.md # written by release-please in its own format
