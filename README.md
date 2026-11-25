@@ -65,8 +65,8 @@ It shows ○ done (green), ⦿ working (yellow) and ● blocked (red) agents; co
 
 ### Notifications
 
-When an agent finishes or becomes blocked while its pane is not on screen, you get a desktop notification named
-after the agent's session, e.g. "Fix the login bug finished". Without `notify-send`, or with
+When an agent finishes or becomes blocked while its pane is not on screen, you get a desktop notification
+(`notify-send`) named after the agent's session, e.g. "Fix the login bug finished". With
 `@tmux_agents_notify 'tmux'`, the message shows in the status line of every attached client instead. (omp's own
 notifications only get through tmux from hidden panes with `allow-passthrough all`.)
 
@@ -122,7 +122,7 @@ set -g @tmux_agents_status_blocked_foreground 'red'
 # Hide counters at 0 ('off' always shows all three)
 set -g @tmux_agents_status_hide_zero 'on'
 
-# Notifications: 'system' (desktop, falls back to tmux), 'tmux' or 'off'
+# Notifications: 'system' (desktop, needs notify-send), 'tmux' (status line) or 'off'
 set -g @tmux_agents_notify 'system'
 
 # Worktree base folder ('' = <project>/.worktrees); worktrees go to <dir>/<repo>/<branch>

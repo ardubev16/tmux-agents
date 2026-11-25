@@ -62,18 +62,21 @@ function agent_name() {
     echo "${name:-$(tmux display-message -p -t "$1" '#{session_name}:#{window_index}')}"
 }
 
-# @tmux_agents_notify: system (desktop notification, falls back to tmux) | tmux (status line message) | off.
+# @tmux_agents_notify: system (desktop notification) | tmux (status line message) | off.
 function notify() {
     local -r message="$1" mode=$(tmux_option @tmux_agents_notify system)
-    [[ $mode == off ]] && return 0
-    if [[ $mode == system ]] && command -v notify-send >/dev/null &&
-        notify-send --app-name=tmux-agents tmux-agents "$message" 2>/dev/null; then
-        return 0
-    fi
-    local client
-    while read -r client; do
-        tmux display-message -c "$client" -d 5000 "tmux-agents: $message"
-    done < <(tmux list-clients -F '#{client_name}')
+    case $mode in
+    system)
+        # Best effort: a missing notify-send or notification daemon must not fail the agent's hook.
+        notify-send --app-name=tmux-agents tmux-agents "$message" 2>/dev/null || true
+        ;;
+    tmux)
+        local client
+        while read -r client; do
+            tmux display-message -c "$client" -d 5000 "tmux-agents: $message"
+        done < <(tmux list-clients -F '#{client_name}')
+        ;;
+    esac
 }
 
 # Called by agent hooks when a session starts or switches: <session file> [socket].

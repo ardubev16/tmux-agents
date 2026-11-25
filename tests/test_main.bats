@@ -71,3 +71,10 @@ EOF
     grep -q 'set-option -pu -t %1 @tmux_agents_unread' "$LOG"
     run ! grep -q notify-send "$LOG"
 }
+
+@test "notify: a failing notify-send neither fails the hook nor falls back to the status line" {
+    printf '#!/bin/sh\nexit 1\n' >"$BATS_TEST_TMPDIR/bin/notify-send"
+    TMUX_PANE=%1 VISIBLE=0 run "$MAIN" state "done"
+    [ "$status" -eq 0 ]
+    run ! grep -q 'display-message -c' "$LOG"
+}
