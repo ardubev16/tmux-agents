@@ -6,6 +6,7 @@ serve a socket (omp) also stream their in-progress reply and share their prompt 
 Everything touching tmux goes through main.sh callbacks, so this module stays tmux-free.
 """
 
+import asyncio
 import os
 import subprocess
 from typing import ClassVar, NamedTuple
@@ -273,7 +274,8 @@ class Dashboard(App):
             self.closing = agent.pane  # the status line asks for confirmation
             return
         self.closing = None
-        self._main("close_agent", agent.pane)
+        # Detached: stopping the agent takes up to 5 s and must finish even if the popup closes meanwhile.
+        await asyncio.create_subprocess_exec(self.main_sh, "close_agent", agent.pane, start_new_session=True)
         await self.action_reload()
 
     def _close_reply(self) -> None:

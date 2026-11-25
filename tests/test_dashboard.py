@@ -261,6 +261,7 @@ async def test_close_needs_confirmation(tmp_path):
         await pilot.press("down", "down", "x", "escape", "x")
         assert "close_agent %3" not in log.read_text()
         await pilot.press("x")
-        await pilot.pause()
+        await pilot.pause(0.3)  # close runs detached
         assert "close_agent %3" in log.read_text().splitlines()
+        await pilot.pause(1.2)  # the next list refresh drops it
         assert app.query_one("#agents").option_count == 2

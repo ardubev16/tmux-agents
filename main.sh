@@ -30,22 +30,44 @@ function set_state() {
         tmux set-option -p -t "$TMUX_PANE" "$state_option" "$state"
     fi
 
-    # Finished while you were not looking at it: the dashboard marks it until you visit the pane.
-    local -r visible="#{&&:#{pane_active},#{&&:#{window_active},#{session_attached}}}"
-    if [[ $state == done && $(tmux display-message -p -t "$TMUX_PANE" "$visible") != 1 ]]; then
+    # Only when you are not looking at the pane: mark it unread (done) and notify (done/blocked).
+    local -r visible_format="#{&&:#{pane_active},#{&&:#{window_active},#{session_attached}}}"
+    local -r visible=$(tmux display-message -p -t "$TMUX_PANE" "$visible_format")
+    if [[ $state == done && $visible != 1 ]]; then
         tmux set-option -p -t "$TMUX_PANE" "$unread_option" 1
     elif [[ $state != clear ]]; then
         tmux set-option -pu -t "$TMUX_PANE" "$unread_option"
     fi
-
-    # Ringing the pane's bell lets tmux flag the window (! in the window/session list) and the terminal.
-    if [[ $state == blocked || $state == done ]] && [[ $(tmux_option @tmux_agents_bell on) == on ]]; then
-        printf '\a' >"$(tmux display-message -p -t "$TMUX_PANE" '#{pane_tty}')"
+    if [[ ($state == done || $state == blocked) && $visible != 1 ]]; then
+        notify "$(agent_name "$TMUX_PANE") $([[ $state == done ]] && echo finished || echo 'needs input')"
     fi
 
     local client
     while read -r client; do
         tmux refresh-client -S -t "$client"
+    done < <(tmux list-clients -F '#{client_name}')
+}
+
+# The session name the harness gave the agent (omp: title line, Claude Code: last ai-title), else its window.
+function agent_name() {
+    local -r transcript=$(tmux show-option -pqv -t "$1" "$transcript_option")
+    local name=""
+    [[ -f $transcript ]] && name=$(grep -h -e '"type":"title"' -e '"type":"ai-title"' "$transcript" |
+        tail -n 1 | jq -r '.title // .aiTitle // empty' 2>/dev/null)
+    echo "${name:-$(tmux display-message -p -t "$1" '#{session_name}:#{window_index}')}"
+}
+
+# @tmux_agents_notify: system (desktop notification, falls back to tmux) | tmux (status line message) | off.
+function notify() {
+    local -r message="$1" mode=$(tmux_option @tmux_agents_notify system)
+    [[ $mode == off ]] && return 0
+    if [[ $mode == system ]] && command -v notify-send >/dev/null &&
+        notify-send --app-name=tmux-agents tmux-agents "$message" 2>/dev/null; then
+        return 0
+    fi
+    local client
+    while read -r client; do
+        tmux display-message -c "$client" -d 5000 "tmux-agents: $message"
     done < <(tmux list-clients -F '#{client_name}')
 }
 
@@ -101,9 +123,24 @@ function switch_agent() {
     seen "$1"
 }
 
-# Stops the agent by closing its pane (tmux sends the harness SIGHUP).
+# Stops the agent like a normal exit, then closes its pane. omp and Claude Code both handle SIGTERM by running
+# their shutdown hooks (which clear the pane's state) and saving the session.
 function close_agent() {
-    tmux kill-pane -t "$1"
+    local -r pane="$1"
+    local -r shell="$(basename "$(tmux show-option -gqv default-shell)")"
+    local pane_pid job
+    pane_pid=$(tmux display-message -p -t "$pane" '#{pane_pid}')
+    # The terminal's foreground process group is the running agent (or the shell when nothing runs).
+    job=$(ps -o tpgid= -p "$pane_pid" | tr -d ' ')
+    if [[ -n $job && $job -gt 0 && $(ps -o comm= -p "$job") != "$shell" ]]; then
+        kill -TERM -- "-$job" 2>/dev/null || true
+        local _
+        for _ in {1..50}; do
+            kill -0 -- "-$job" 2>/dev/null || break
+            sleep 0.1
+        done
+    fi
+    tmux kill-pane -t "$pane" 2>/dev/null || true
 }
 
 # Sends $2 followed by Enter; an empty $2 sends just Enter.

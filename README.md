@@ -3,7 +3,7 @@
 A tmux plugin to keep track of coding agents (omp, Claude Code, …) running in your tmux panes:
 
 - a status bar counter of agents that are done / working / blocked,
-- a bell on the agent's window when it finishes or needs you,
+- a notification when an agent finishes or needs you while you are not looking at it,
 - a popup dashboard to read every agent's output, jump to it, or send it a quick reply,
 - a keybinding to open a git worktree for a branch in a fixed folder, as its own tmux session.
 
@@ -42,11 +42,14 @@ set -g status-right '#{tmux_agents_status}'
 
 It renders three colored counters: **green** done, **yellow** working, **red** blocked.
 
-### Bell
+### Notifications
 
-When an agent becomes done or blocked, the plugin rings its pane's bell. tmux then marks the window with `!`
-(also in `prefix + s`/`w`) and forwards the bell to your terminal. This needs `monitor-bell on`, which is the
-tmux default.
+When an agent becomes done or blocked while its pane is not on screen, the plugin sends a desktop notification
+(`notify-send`) named after the agent's session, e.g. "Fix the login bug finished". Without `notify-send`, or
+with `@tmux_agents_notify 'tmux'`, it shows the message in the status line of every attached client instead.
+
+omp also sends its own notifications through tmux passthrough, but tmux drops them from panes that are not
+visible unless `allow-passthrough` is `all`; the plugin's notification covers that case (and Claude Code).
 
 ### Keybindings
 
@@ -57,7 +60,8 @@ tmux default.
 
 Agents are listed by the session name their harness gave them. Agents that need input (**needs input**) come
 first, then agents that finished while you were not looking at their pane (**finished**, cleared when you visit
-the pane), then the rest. Closing an agent (`x`, then `x` again to confirm) kills its pane, which stops the harness.
+the pane), then the rest. Closing an agent (`x`, then `x` again to confirm) stops the harness like a normal exit
+(SIGTERM: omp and Claude Code run their shutdown hooks and save the session), then closes its pane.
 
 The chat is rendered from the agent's session file, so it wraps to the popup width (prose, code and tables) and
 stays visible while the agent's pane shows something else, e.g. `$EDITOR` on a long prompt. Only agents whose
@@ -76,7 +80,7 @@ reused. A branch that doesn't exist yet is created from the current `HEAD`.
 
 ## Installation
 
-Dependencies: `git`, `fzf`, `jq`, [`uv`](https://docs.astral.sh/uv/) (the dashboard is a Python app; its first
+Dependencies: `git`, `fzf`, `jq`, `notify-send` (optional, desktop notifications), [`uv`](https://docs.astral.sh/uv/) (the dashboard is a Python app; its first
 launch sets up the plugin's `.venv`), tmux ≥ 3.2 (popups).
 
 ### Tmux Plugin Manager (recommended)
@@ -111,8 +115,8 @@ set -g @tmux_agents_status_done_foreground 'green'
 set -g @tmux_agents_status_working_foreground 'yellow'
 set -g @tmux_agents_status_blocked_foreground 'red'
 
-# Ring the agent pane's bell when it becomes done/blocked
-set -g @tmux_agents_bell 'on'
+# Notify when an agent becomes done/blocked off screen: 'system' (desktop, falls back to tmux), 'tmux', 'off'
+set -g @tmux_agents_notify 'system'
 
 # Worktree base folder ('' = <project>/.worktrees); worktrees go to <dir>/<repo>/<branch>
 set -g @tmux_agents_worktree_dir ''

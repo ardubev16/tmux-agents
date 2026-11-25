@@ -1,7 +1,7 @@
 # tmux-agents
 
 A tmux plugin that tracks coding agents (omp, Claude Code, …) running in ordinary tmux panes:
-status bar counters (done/working/blocked), a bell on state changes, a popup dashboard to
+status bar counters (done/working/blocked), notifications on state changes, a popup dashboard to
 read/switch/reply, and a keybinding to open a branch worktree as its own session.
 See README.md for user-facing usage, keybindings, and configuration options.
 
