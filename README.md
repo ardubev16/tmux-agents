@@ -55,13 +55,13 @@ visible unless `allow-passthrough` is `all`; the plugin's notification covers th
 
 | Key          | Action                                                                                                                       |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `prefix + O` | Agent dashboard ("overview") popup: agents on the left, the highlighted agent's chat on the right, both updating live. `Enter` switch to it, `Ctrl-r` reply, `/` filter the list, `Tab` open lazygit in the agent's folder, `PgUp`/`PgDn` scroll the chat (scrolling to the top loads older messages), `x` twice close the agent, `q`/`Esc` close |
+| `prefix + O` | Agent dashboard ("overview") popup: agents on the left, the highlighted agent's chat on the right, both updating live. `Enter` switch to it, `Ctrl-r` reply, `/` filter the list, `Tab` open lazygit in place of the chat, `PgUp`/`PgDn` scroll the chat (scrolling to the top loads older messages), `x` twice close the agent, `q`/`Esc` close |
 | `prefix + W` | Pick a branch (fzf), create or reuse its worktree, and switch to a tmux session rooted there (reuses any session already there). `Ctrl-x` on a branch removes its worktree and the sessions rooted there instead |
 
 Agents are listed by the session name their harness gave them, in three sections (empty ones are hidden):
 **Waiting** for your input, **Idle**, and **Running**. Idle agents that finished while you were not looking at
-their pane are marked **finished** until you visit it. Each agent shows how long it has been in its state (e.g. `12m`).
-`/` filters the list by name, pane or folder (`Enter` keeps the filter, `Esc` clears it). Closing an agent (`x`, then `x` again to confirm) stops the harness like a normal exit
+their pane are marked **finished** until you visit it. Running agents show how long they have been running (e.g. `12m`).
+`/` fuzzy-filters the list by name, pane or command (`Enter` keeps the filter, `Esc` clears it). Closing an agent (`x`, then `x` again to confirm) stops the harness like a normal exit
 (SIGTERM: omp and Claude Code run their shutdown hooks and save the session), then closes its pane.
 
 The chat is rendered from the agent's session file, so it wraps to the popup width (prose, code and tables) and
@@ -69,7 +69,8 @@ stays visible while the agent's pane shows something else, e.g. `$EDITOR` on a l
 hooks report a session (the bundled omp and Claude Code integrations) show a chat. Questions an agent asks you (omp's
 `ask`, Claude Code's `AskUserQuestion`) show in the chat as the question and its choices, without the answers the
 agent prefilled. The header shows the agent folder's uncommitted changes (e.g. `3 files +40 −12`, tracked files
-only); `Tab` opens [lazygit](https://github.com/jesseduffield/lazygit) there and returns to the dashboard when you quit it.
+only) and commits its upstream lacks (`2 unpushed`). `Tab` runs [lazygit](https://github.com/jesseduffield/lazygit)
+there, in place of the chat with the agent list still beside it; every key goes to lazygit until you quit it.
 
 The dashboard uses your terminal's colorscheme. omp agents also stream their in-progress reply, current activity
 (thinking, running a tool) and prompts queued while they work (shown as *queued* until delivered) into the

@@ -29,6 +29,8 @@ See README.md for user-facing usage, keybindings, and configuration options.
   - `internal/chat` — scroll view rendering those blocks with Glamour at the view width
     (hard-wraps what Glamour cannot, so nothing is cut; cached per width) plus a live tail.
   - `internal/agentsocket` — NDJSON client for the agent socket (draft get/set, live stream).
+  - `internal/term` — runs a program (lazygit) in a pty in part of the view: a terminal emulator
+    (`charmbracelet/x/vt`) keeps its screen, Bubble Tea keys are forwarded to it.
 - `integrations/` — harness hooks that call `"$TMUX_AGENTS" state|session …`. `omp.ts` also
   serves the agent socket; Claude Code has no equivalent, so it gets no streaming or drafts.
 

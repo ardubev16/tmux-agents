@@ -14,9 +14,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ardubev16/tmux-agents/internal/agentsocket"
 	"github.com/ardubev16/tmux-agents/internal/chat"
+	"github.com/ardubev16/tmux-agents/internal/term"
 	"github.com/ardubev16/tmux-agents/internal/transcript"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -56,9 +58,9 @@ type agent struct {
 func (a agent) sharesDraft() bool { return a.socket != "" && a.state != "blocked" }
 
 type (
-	tickMsg     struct{}
-	lazygitDone struct{ err error }
-	liveMsg     struct {
+	tickMsg struct{}
+	termMsg struct{} // lazygit's screen changed or it exited
+	liveMsg struct {
 		gen  int
 		live *agentsocket.Live // nil: the subscription ended
 	}
@@ -79,6 +81,8 @@ type model struct {
 
 	filtering bool
 	filter    textinput.Model
+
+	lazygit *term.Term // shown in place of the chat while it runs; gets every key
 
 	chat        chat.Chat
 	transcripts map[string]*transcript.Transcript // by path, so polls only parse appended lines
@@ -142,10 +146,9 @@ func (m *model) applyFilter() {
 	if previous := m.agent(); previous != nil {
 		prevPane, prevSocket = previous.pane, previous.socket
 	}
-	query := strings.ToLower(m.filter.Value())
 	m.agents, m.selected = nil, 0
 	for _, a := range m.all {
-		if strings.Contains(strings.ToLower(strings.Join([]string{name(a), a.target, a.command, a.path}, " ")), query) {
+		if fuzzy(name(a)+" "+a.target+" "+a.command, m.filter.Value()) {
 			m.agents = append(m.agents, a)
 		}
 	}
@@ -159,37 +162,58 @@ func (m *model) applyFilter() {
 	}
 }
 
-// changes sums up the uncommitted changes to tracked files in dir, e.g. "3 files +40 −12"; "" when there are
-// none or dir is not in a git repo.
-func changes(dir string) string {
-	cmd := exec.Command("git", "-C", dir, "diff", "--shortstat", "HEAD")
-	cmd.Env = append(os.Environ(), "LC_ALL=C") // the summary is parsed, so not translated
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	var files, added, deleted int
-	for _, part := range strings.Split(strings.TrimSpace(string(out)), ", ") {
-		var n int
-		var what string
-		fmt.Sscanf(part, "%d %s", &n, &what)
-		switch {
-		case strings.HasPrefix(what, "file"):
-			files = n
-		case strings.HasPrefix(what, "insertion"):
-			added = n
-		case strings.HasPrefix(what, "deletion"):
-			deleted = n
+// fuzzy reports whether the query's characters appear in s in order, ignoring case and spaces, like fzf.
+func fuzzy(s, query string) bool {
+	s = strings.ToLower(s)
+	for _, r := range strings.ToLower(query) {
+		if r == ' ' {
+			continue
 		}
+		i := strings.IndexRune(s, r)
+		if i < 0 {
+			return false
+		}
+		s = s[i+utf8.RuneLen(r):]
 	}
-	if files == 0 {
-		return ""
+	return true
+}
+
+// changes sums up dir's uncommitted changes to tracked files and the commits its upstream lacks, e.g.
+// "3 files +40 −12 · 2 unpushed"; "" when there are neither or dir is not in a git repo.
+func changes(dir string) string {
+	git := func(args ...string) (string, error) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "LC_ALL=C") // the output is parsed, so not translated
+		out, err := cmd.Output()
+		return strings.TrimSpace(string(out)), err
 	}
-	noun := "files"
-	if files == 1 {
-		noun = "file"
+	var parts []string
+	if stat, err := git("diff", "--shortstat", "HEAD"); err == nil && stat != "" {
+		var files, added, deleted int
+		for _, part := range strings.Split(stat, ", ") {
+			var n int
+			var what string
+			fmt.Sscanf(part, "%d %s", &n, &what)
+			switch {
+			case strings.HasPrefix(what, "file"):
+				files = n
+			case strings.HasPrefix(what, "insertion"):
+				added = n
+			case strings.HasPrefix(what, "deletion"):
+				deleted = n
+			}
+		}
+		noun := "files"
+		if files == 1 {
+			noun = "file"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s +%d −%d", files, noun, added, deleted))
 	}
-	return fmt.Sprintf("%d %s +%d −%d", files, noun, added, deleted)
+	// A branch without an upstream has nothing to compare with.
+	if n, err := git("rev-list", "--count", "@{upstream}..HEAD"); err == nil && n != "0" {
+		parts = append(parts, n+" unpushed")
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (m *model) agentChanged() {
@@ -273,8 +297,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout()
 	case tickMsg:
 		m.frame++
-		// Not while replying: a reload could move the selection to another agent, which the reply would then go to.
-		if m.frame%fps == 0 && !m.replying {
+		// Not while replying or in lazygit: a reload could move the selection to another agent, which the reply
+		// would then go to.
+		if m.frame%fps == 0 && !m.replying && m.lazygit == nil {
 			m.reload()
 		}
 		if m.frame%3 == 0 {
@@ -296,16 +321,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.chat.Update(nil, m.liveMarkdown(), m.chat.More)
 		}
-	case lazygitDone:
-		if msg.err != nil {
-			m.notice = "lazygit: " + msg.err.Error()
+	case termMsg:
+		if m.lazygit != nil && m.lazygit.Exited() {
+			m.lazygit.Close()
+			m.lazygit = nil
+			m.reload()
 		}
-		m.reload()
 	case tea.MouseMsg:
 		return m, m.mouse(msg)
 	case tea.KeyMsg:
 		m.notice = ""
 		switch {
+		case m.lazygit != nil:
+			m.lazygit.Key(msg)
+			return m, nil
 		case m.replying:
 			return m, m.replyKey(msg)
 		case m.filtering:
@@ -317,6 +346,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
+	if m.lazygit != nil {
+		return nil
+	}
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
 		m.scrollChat(-3)
@@ -390,7 +422,13 @@ func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 		if a := m.agent(); a != nil {
 			cmd := exec.Command("lazygit")
 			cmd.Dir = a.path
-			return tea.ExecProcess(cmd, func(err error) tea.Msg { return lazygitDone{err} })
+			send := m.send
+			t, err := term.Start(cmd, m.rightWidth(), m.chatHeight(), func() { send(termMsg{}) })
+			if err != nil {
+				m.notice = "lazygit: " + err.Error()
+				return nil
+			}
+			m.lazygit = t
 		}
 	case "esc":
 		switch {
@@ -485,6 +523,9 @@ func (m *model) chatHeight() int {
 func (m *model) layout() {
 	m.reply.SetWidth(m.rightWidth())
 	m.chat.SetSize(m.chatWidth(), m.chatHeight())
+	if m.lazygit != nil {
+		m.lazygit.Resize(m.rightWidth(), m.chatHeight())
+	}
 }
 
 func name(a agent) string {
@@ -494,17 +535,7 @@ func name(a agent) string {
 	return a.command
 }
 
-func details(a agent) string {
-	return fmt.Sprintf("%s · %s · %s", a.target, a.command, shortPath(a.path))
-}
-
-// shortPath writes the home folder as ~.
-func shortPath(path string) string {
-	if home, err := os.UserHomeDir(); err == nil && (path == home || strings.HasPrefix(path, home+"/")) {
-		return "~" + path[len(home):]
-	}
-	return path
-}
+func details(a agent) string { return a.target + " · " + a.command }
 
 // ago is how long ago since (epoch seconds) was, in its largest unit: 45s, 12m, 3h, 2d.
 func ago(since int64, now time.Time) string {
@@ -551,9 +582,9 @@ func (m *model) listRows() (rows []string, owners []int) {
 			icon, note = "●", " finished"
 		}
 		color := base.Foreground(style.color)
-		// How long the agent has been in this state, at the right edge.
+		// How long the agent has been running, at the right edge.
 		since := ""
-		if a.since > 0 {
+		if a.since > 0 && a.state == "working" {
 			since = base.Faint(true).Render(ago(a.since, now) + " ")
 		}
 		first := base.Render(" ") + color.Render(icon) + base.Render(" ") + base.Bold(true).Render(name(a)) + color.Render(note)
@@ -651,6 +682,10 @@ func (m *model) View() string {
 	list := lipgloss.NewStyle().Width(m.listWidth()).Height(body).MaxHeight(body).Render(strings.Join(rows, "\n"))
 	chatView := lipgloss.JoinHorizontal(lipgloss.Top,
 		lipgloss.NewStyle().Width(m.chatWidth()).Render(m.chat.View()), " ", m.scrollbar())
+	if m.lazygit != nil {
+		chatView = lipgloss.NewStyle().Width(m.rightWidth()).MaxWidth(m.rightWidth()).
+			Height(m.chatHeight()).MaxHeight(m.chatHeight()).Render(m.lazygit.View())
+	}
 	right := []string{m.header(), border.Render(strings.Repeat("─", m.rightWidth())), chatView, m.status()}
 	if m.replying {
 		right = append(right, border.Render(strings.Repeat("─", m.rightWidth())), m.reply.View())
@@ -659,10 +694,12 @@ func (m *model) View() string {
 	main := lipgloss.JoinHorizontal(lipgloss.Top, list, sep, " ", strings.Join(right, "\n"))
 	help := "↑↓ select · ⏎ switch · ^r reply · / filter · tab lazygit · pgup/pgdn scroll · x close agent · q/esc close"
 	switch {
+	case m.lazygit != nil:
+		help = "keys go to lazygit · quit it (q) to return to the chat"
 	case m.replying:
 		help = "⏎ send · ^j newline · esc keep as draft"
 	case m.filtering:
-		help = "type to filter by name, pane or folder · ↑↓ select · ⏎ keep · esc clear"
+		help = "type to fuzzy filter by name, pane or command · ↑↓ select · ⏎ keep · esc clear"
 	}
 	return main + "\n" + dim.Render(ansi.Truncate(help, m.width, "…"))
 }

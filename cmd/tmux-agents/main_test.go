@@ -89,10 +89,10 @@ printf '%%s\n' "$*" >>'%[1]s'
 case "$1" in
 list_agents)
     printf '%%%%1\tblocked\ts:1.0\tclaude\t~/a\t\t\t\t%%s\n' "$(( $(date +%%s) - 180 ))"
-    printf '%%%%2\tworking\ts:2.0\tomp\t~/b\t%[2]s\t%[3]s\t\n'
+    printf '%%%%2\tworking\ts:2.0\tomp\t%[4]s\t%[2]s\t%[3]s\t\t%%s\n' "$(( $(date +%%s) - 180 ))"
     grep -q '^close_agent %%3' '%[1]s' || printf '%%%%3\tdone\ts:3.0\tomp\t~/c\t\t\t1\n' ;;
 esac
-`, log, session, socket)), 0o755)
+`, log, session, socket, dir)), 0o755)
 	return script, func() []string {
 		out, _ := os.ReadFile(log)
 		return strings.Split(strings.TrimSpace(string(out)), "\n")
@@ -115,6 +115,8 @@ func press(m *model, keys ...string) {
 		switch k {
 		case "enter":
 			msg = tea.KeyMsg{Type: tea.KeyEnter}
+		case "tab":
+			msg = tea.KeyMsg{Type: tea.KeyTab}
 		case "esc":
 			msg = tea.KeyMsg{Type: tea.KeyEsc}
 		case "down":
@@ -156,8 +158,8 @@ func TestListIsGroupedAndShowsNamesAndWhatNeedsYou(t *testing.T) {
 			t.Fatalf("rows %q, want %q", lines, want)
 		}
 	}
-	if !strings.HasSuffix(lines[1], " 3m") {
-		t.Errorf("time in state missing: %q", lines[1])
+	if !strings.HasSuffix(lines[3], " 3m") || strings.HasSuffix(lines[1], "m") {
+		t.Errorf("only running agents show how long: %q", lines)
 	}
 	m.agents = m.agents[:1] // no running or idle agents: no empty sections
 	if rows, _ := m.listRows(); len(rows) != 3 {
@@ -234,6 +236,12 @@ func TestChangesSummarizesTheDiff(t *testing.T) {
 	if got := changes(dir); got != "1 file +2 −1" {
 		t.Errorf("got %q", got)
 	}
+	git("branch", "base")
+	git("branch", "--set-upstream-to=base")
+	git("commit", "-qam", "ahead")
+	if got := changes(dir); got != "1 unpushed" {
+		t.Errorf("got %q", got)
+	}
 }
 
 func TestReplyGoesToTheAgentItWasOpenedFor(t *testing.T) {
@@ -248,6 +256,31 @@ func TestReplyGoesToTheAgentItWasOpenedFor(t *testing.T) {
 	if got := calls(); !contains(got, "reply_agent %3 hi") || contains(got, "reply_agent %1 hi") {
 		t.Errorf("calls %q", got)
 	}
+}
+
+func TestTabRunsLazygitInPlaceOfTheChat(t *testing.T) {
+	bin := t.TempDir()
+	os.WriteFile(filepath.Join(bin, "lazygit"), []byte("#!/bin/sh\necho stub-lazygit\nread answer\n"), 0o755)
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	m, msgs, _ := newModel(t, "")
+	waitFor := func(what string, done func() bool) {
+		t.Helper()
+		for !done() {
+			select {
+			case msg := <-msgs:
+				m.Update(msg)
+			case <-time.After(5 * time.Second):
+				t.Fatalf("no %s; view:\n%s", what, ansi.Strip(m.View()))
+			}
+		}
+	}
+	press(m, "down", "tab")
+	waitFor("lazygit", func() bool { return strings.Contains(m.View(), "stub-lazygit") })
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "Waiting") {
+		t.Errorf("the agent list should stay next to lazygit:\n%s", view)
+	}
+	press(m, "enter") // goes to lazygit, which exits
+	waitFor("the chat back", func() bool { return m.lazygit == nil })
 }
 
 func TestLiveReplyAndQueuedPromptsStream(t *testing.T) {
