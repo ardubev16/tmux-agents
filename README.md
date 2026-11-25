@@ -12,9 +12,10 @@ own hooks, so nothing has to run inside a separate multiplexer.
 
 ## Installation
 
-Requirements: tmux ≥ 3.2, `git`, `fzf`, `jq` and [Go](https://go.dev/dl/) (the dashboard is built on first
-launch). Optional: `notify-send` for desktop notifications on Linux (macOS uses `osascript`),
-[lazygit](https://github.com/jesseduffield/lazygit) for the dashboard's git view.
+Requirements: tmux ≥ 3.2, `git`, `fzf`, `jq` and `curl` (the dashboard, a single binary for Linux or macOS on
+amd64/arm64, is downloaded from the matching GitHub release on first launch). Optional: `notify-send` for desktop
+notifications on Linux (macOS uses `osascript`), [lazygit](https://github.com/jesseduffield/lazygit) for the
+dashboard's git view.
 
 With [TPM](https://github.com/tmux-plugins/tpm), add the plugin and press `prefix + I`:
 

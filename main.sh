@@ -7,6 +7,8 @@ set -euo pipefail
 
 MAIN="$(realpath "${BASH_SOURCE[0]}")"
 declare -r MAIN
+# The release this checkout belongs to; release-please bumps it, and the dashboard binary is downloaded for it.
+declare -r version="0.0.0" # x-release-please-version
 declare -r state_option='@tmux_agents_state'
 declare -r transcript_option='@tmux_agents_transcript'
 declare -r socket_option='@tmux_agents_socket'
@@ -150,14 +152,26 @@ function agent_dashboard() {
     tmux display-popup -w 90% -h 90% -E "'$MAIN' dashboard"
 }
 
-# Popup body: builds the Go dashboard on first use and after the sources change (e.g. a plugin update).
+# Popup body: runs the dashboard released with this version of the plugin, downloading it on first use and after
+# an update. (To try local changes: `go run ./cmd/tmux-agents "$PWD/main.sh"`.)
 function dashboard() {
-    local -r root="$(dirname "$MAIN")"
-    local -r bin="$root/bin/tmux-agents"
-    if [[ ! -x $bin || -n $(find "$root/cmd" "$root/internal" "$root/go.mod" "$root/go.sum" -newer "$bin" -print -quit) ]]; then
-        command -v go &>/dev/null || die "tmux-agents: the dashboard needs Go to build (https://go.dev/dl/)."
-        echo "Building the dashboard…"
-        (cd "$root" && go build -o "$bin" ./cmd/tmux-agents) || die "tmux-agents: building the dashboard failed."
+    local -r dir="$(dirname "$MAIN")/bin"
+    local -r bin="$dir/tmux-agents-$version"
+    if [[ ! -x $bin ]]; then
+        local os arch
+        os=$(uname -s | tr '[:upper:]' '[:lower:]')
+        case $(uname -m) in
+        x86_64 | amd64) arch=amd64 ;;
+        aarch64 | arm64) arch=arm64 ;;
+        *) die "tmux-agents: no dashboard is built for $(uname -m)." ;;
+        esac
+        local -r url="https://github.com/ardubev16/tmux-agents/releases/download/v$version/tmux-agents_${os}_$arch"
+        echo "Downloading the dashboard $version…"
+        rm -rf "$dir" # earlier versions
+        mkdir -p "$dir"
+        curl -fL --progress-bar -o "$bin.part" "$url" || die "tmux-agents: downloading the dashboard failed: $url"
+        chmod +x "$bin.part"
+        mv "$bin.part" "$bin"
     fi
     exec "$bin" "$MAIN"
 }

@@ -102,3 +102,29 @@ EOF
         fi
     done
 }
+
+@test "dashboard: downloads the release for this version and platform once, then runs it" {
+    # A copy of the plugin, so the real bin/ stays untouched.
+    local -r plugin="$BATS_TEST_TMPDIR/plugin"
+    mkdir -p "$plugin"
+    cp -r "$(dirname "$MAIN")/main.sh" "$(dirname "$MAIN")/scripts" "$plugin/"
+    printf '#!/bin/sh\ncase $1 in -s) echo Linux ;; -m) echo aarch64 ;; esac\n' >"$BATS_TEST_TMPDIR/bin/uname"
+    cat >"$BATS_TEST_TMPDIR/bin/curl" <<'EOF'
+#!/bin/sh
+echo "curl $*" >>"$LOG"
+while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done
+printf '#!/bin/sh\necho "dashboard $*"\n' >"$out"
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/"*
+    version=$(sed -n 's/^declare -r version="\(.*\)".*/\1/p' "$plugin/main.sh")
+
+    run "$plugin/main.sh" dashboard
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"dashboard $plugin/main.sh" ]]
+    grep -q "releases/download/v$version/tmux-agents_linux_arm64" "$LOG"
+
+    : >"$LOG"
+    run "$plugin/main.sh" dashboard
+    [[ "$output" == "dashboard $plugin/main.sh" ]]
+    run ! grep -q curl "$LOG"
+}

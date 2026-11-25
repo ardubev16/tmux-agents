@@ -11,10 +11,11 @@ See README.md for user-facing usage, keybindings, and configuration options.
   binds keys, exports `TMUX_AGENTS` (path to `main.sh`) for agent hooks, wires up the
   status bar placeholder.
 - `main.sh` — the single entry point: every key binding, hook, popup body and dashboard callback
-  is a subcommand (`state`, `session`, `status_bar`, `agent_dashboard`/`dashboard`,
+  is a subcommand (`state`, `session`, `claude_hook`, `status_bar`, `agent_dashboard`/`dashboard`,
   `new_worktree`/`pick_worktree`, the dashboard's `list_agents`/`switch_agent`/…). Popups run
   `main.sh <subcommand>` directly, so no state is passed back through temp files or exit codes.
-  `dashboard` builds the Go dashboard into `bin/` when missing or stale, then execs it.
+  `dashboard` downloads the binary released for `version` (bumped by release-please) into `bin/`, then
+  execs it; try local Go changes with `go run ./cmd/tmux-agents "$PWD/main.sh"`.
   Per-pane options: `@tmux_agents_state`, plus what `session` reports: the agent's session
   file (`@tmux_agents_transcript`) and, for omp, its socket (`@tmux_agents_socket`).
   `@tmux_agents_unread` marks a pane that finished while not visible; tmux hooks set in
@@ -45,6 +46,12 @@ Use [bats-core](https://github.com/bats-core/bats-core) (`bats`) for tests. See
 
 The dashboard is tested with `go test ./...`: transcript parsing, chat wrapping, and the model
 driven key by key against a fake `main.sh` and a fake agent socket (`cmd/tmux-agents/main_test.go`).
+
+## Releases
+
+release-please (`.github/workflows/release.yaml`) keeps a release PR open from the Conventional Commits on
+`main`; merging it tags the release, bumps `version` in `main.sh`, and attaches the dashboard built for
+linux/darwin × amd64/arm64, which `main.sh dashboard` downloads.
 
 ## Commits
 
