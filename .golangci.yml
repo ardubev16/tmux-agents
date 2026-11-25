@@ -1,0 +1,8 @@
+version: "2"
+linters:
+  exclusions:
+    presets:
+      - std-error-handling # unchecked Close and friends
+    rules:
+      - path: _test\.go
+        linters: [errcheck] # test setup that fails shows up in the assertions
