@@ -134,7 +134,6 @@ session) set_session "$@" ;;
 status_bar) status_bar "$@" ;;
 agent_dashboard) agent_dashboard "$@" ;;
 list_agents) list_agents "$@" ;;
-preview_agent) preview_agent "$@" ;;
 switch_agent) switch_agent "$@" ;;
 reply_agent) reply_agent "$@" ;;
 new_worktree) new_worktree "$@" ;;
