@@ -1,6 +1,6 @@
 // tmux-agents integration for omp/pi. Install: symlink into ~/.omp/agent/extensions/.
 // Reports state changes and the session file to tmux, and serves a socket the dashboard uses to
-// stream the in-progress reply and to read/write the prompt draft (protocol: src/tmux_agents/agent_socket.py).
+// stream the in-progress reply and to read/write the prompt draft (protocol: internal/agentsocket).
 import { execFileSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";

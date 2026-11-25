@@ -1,0 +1,474 @@
+// Agent dashboard: agents on the left, the highlighted agent's chat on the right.
+//
+// The chat is rendered from the agent's session file, so it reflows to any width and stays visible while
+// the agent's pane shows something else (e.g. $EDITOR on a prompt). Agents that serve a socket (omp) also
+// stream their in-progress reply and share their prompt draft. Everything touching tmux goes through
+// main.sh callbacks, so this program stays tmux-free.
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/ardubev16/tmux-agents/internal/agentsocket"
+	"github.com/ardubev16/tmux-agents/internal/chat"
+	"github.com/ardubev16/tmux-agents/internal/transcript"
+	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+)
+
+const (
+	chatBlocks = 40 // newest blocks rendered when opening an agent's chat, and added per scroll to the top
+	fps        = 12
+)
+
+var spinner = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+
+// Same glyphs and colors as the status bar counters, from the terminal's palette.
+var stateStyles = map[string]struct {
+	icon  string
+	color lipgloss.Color
+}{"done": {"○", "2"}, "working": {"⦿", "3"}, "blocked": {"●", "1"}}
+
+var (
+	dim    = lipgloss.NewStyle().Faint(true)
+	bold   = lipgloss.NewStyle().Bold(true)
+	border = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	marker = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Render("▌")
+)
+
+type agent struct {
+	pane, state, target, command, path, transcript, socket, unread, title string
+}
+
+// A blocked agent shows a dialog, so a reply answers it instead of touching the draft.
+func (a agent) sharesDraft() bool { return a.socket != "" && a.state != "blocked" }
+
+type (
+	tickMsg struct{}
+	liveMsg struct {
+		gen  int
+		live *agentsocket.Live // nil: the subscription ended
+	}
+)
+
+type model struct {
+	mainSh string
+	send   func(tea.Msg)
+
+	agents   []agent
+	selected int
+	frame    int
+	closing  string // pane waiting for a second x to confirm closing it
+
+	chat        chat.Chat
+	transcripts map[string]*transcript.Transcript // by path, so polls only parse appended lines
+	wanted      int                               // newest blocks the chat shows; grows on scrolling up
+	shown       string                            // what the chat shows, to skip identical re-renders
+
+	live    agentsocket.Live // latest snapshot from the highlighted agent's socket
+	liveGen int
+	stop    chan struct{}
+
+	replying bool
+	reply    textarea.Model
+
+	width, height int
+}
+
+func (m *model) main(args ...string) string {
+	out, _ := exec.Command(m.mainSh, args...).Output()
+	return string(out)
+}
+
+func (m *model) agent() *agent {
+	if m.selected < len(m.agents) {
+		return &m.agents[m.selected]
+	}
+	return nil
+}
+
+func tick() tea.Cmd {
+	return tea.Tick(time.Second/fps, func(time.Time) tea.Msg { return tickMsg{} })
+}
+
+func (m *model) Init() tea.Cmd {
+	m.reload()
+	return tick()
+}
+
+func (m *model) reload() {
+	previous := m.agent()
+	var prevPane, prevSocket string
+	if previous != nil {
+		prevPane, prevSocket = previous.pane, previous.socket
+	}
+	var agents []agent
+	for _, line := range strings.Split(strings.TrimRight(m.main("list_agents"), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		f := append(strings.Split(line, "\t"), make([]string, 8)...)
+		a := agent{pane: f[0], state: f[1], target: f[2], command: f[3], path: f[4], transcript: f[5], socket: f[6], unread: f[7]}
+		if a.transcript != "" {
+			a.title = transcript.Title(a.transcript)
+		}
+		agents = append(agents, a)
+	}
+	m.agents, m.selected = agents, 0
+	for i, a := range agents {
+		if a.pane == prevPane {
+			m.selected = i
+		}
+	}
+	if a := m.agent(); a == nil || a.pane != prevPane || a.socket != prevSocket {
+		m.agentChanged()
+	}
+}
+
+func (m *model) agentChanged() {
+	a := m.agent()
+	if a == nil || a.pane != m.closing {
+		m.closing = ""
+	}
+	if m.stop != nil {
+		close(m.stop)
+		m.stop = nil
+	}
+	m.live, m.wanted = agentsocket.Live{}, chatBlocks
+	m.liveGen++
+	if a != nil && a.socket != "" {
+		m.stop = make(chan struct{})
+		gen, stop, socket, send := m.liveGen, m.stop, a.socket, m.send
+		go func() {
+			// Errors mean the agent is gone or the socket is stale: the session file still shows the chat.
+			agentsocket.Subscribe(socket, stop, func(live agentsocket.Live) { send(liveMsg{gen, &live}) })
+			send(liveMsg{gen, nil})
+		}()
+	}
+	m.pollChat(true)
+	m.chat.ScrollEnd()
+}
+
+func (m *model) pollChat(force bool) {
+	a := m.agent()
+	key := ""
+	if a != nil {
+		key = a.pane
+		// omp creates the session file with the first message; until then the chat is just the live reply.
+		if info, err := os.Stat(a.transcript); err == nil && a.transcript != "" {
+			key = fmt.Sprint(a.pane, info.ModTime().UnixNano(), info.Size(), m.wanted)
+		}
+	}
+	if key == m.shown && !force {
+		return
+	}
+	m.shown = key
+	blocks, more := []string{}, false
+	if a != nil && a.transcript != "" {
+		t, ok := m.transcripts[a.transcript]
+		if !ok {
+			t = transcript.New(a.transcript)
+			m.transcripts[a.transcript] = t
+		}
+		blocks, more = t.Blocks(m.wanted)
+	}
+	m.chat.Update(blocks, m.liveMarkdown(), more)
+}
+
+// liveMarkdown is the in-progress reply, then prompts the agent has queued but not received yet.
+func (m *model) liveMarkdown() string {
+	var parts []string
+	if m.live.Streaming && m.live.Text != "" {
+		parts = append(parts, m.live.Text)
+	}
+	for _, prompt := range m.live.Queued {
+		parts = append(parts, "> "+strings.ReplaceAll(prompt, "\n", "\n> ")+"\n>\n> *queued*")
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func (m *model) scrollChat(delta int) {
+	m.chat.ScrollBy(delta)
+	if m.chat.AtTop() && m.chat.More {
+		m.wanted += chatBlocks
+		m.pollChat(false)
+	}
+}
+
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		m.layout()
+	case tickMsg:
+		m.frame++
+		if m.frame%fps == 0 {
+			m.reload()
+		}
+		if m.frame%3 == 0 {
+			m.pollChat(false)
+		}
+		return m, tick()
+	case liveMsg:
+		if msg.gen != m.liveGen {
+			return m, nil // from an agent no longer highlighted
+		}
+		if msg.live == nil {
+			m.live = agentsocket.Live{}
+			return m, nil
+		}
+		finished := m.live.Streaming && !msg.live.Streaming
+		m.live = *msg.live
+		if finished {
+			m.pollChat(true) // the finished reply is in the session file now
+		} else {
+			m.chat.Update(nil, m.liveMarkdown(), m.chat.More)
+		}
+	case tea.MouseMsg:
+		return m, m.mouse(msg)
+	case tea.KeyMsg:
+		if m.replying {
+			return m, m.replyKey(msg)
+		}
+		return m, m.key(msg)
+	}
+	return m, nil
+}
+
+func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.scrollChat(-3)
+	case tea.MouseButtonWheelDown:
+		m.scrollChat(3)
+	case tea.MouseButtonLeft:
+		if msg.Action == tea.MouseActionPress && msg.X < m.listWidth() && msg.Y/2 < len(m.agents) {
+			m.selected = msg.Y / 2
+			m.agentChanged()
+		}
+	}
+	return nil
+}
+
+func (m *model) key(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "up", "k":
+		if m.selected > 0 {
+			m.selected--
+			m.agentChanged()
+		}
+	case "down", "j":
+		if m.selected < len(m.agents)-1 {
+			m.selected++
+			m.agentChanged()
+		}
+	case "pgup":
+		m.scrollChat(-max(1, m.chatHeight()/2))
+	case "pgdown":
+		m.scrollChat(max(1, m.chatHeight()/2))
+	case "enter":
+		if a := m.agent(); a != nil {
+			m.main("switch_agent", a.pane)
+			return tea.Quit
+		}
+	case "ctrl+r":
+		if a := m.agent(); a != nil {
+			draft := ""
+			if a.sharesDraft() {
+				var reply struct{ Draft string }
+				if agentsocket.Request(a.socket, map[string]string{"op": "get_draft"}, &reply) == nil {
+					draft = reply.Draft
+				}
+			}
+			m.replying = true
+			m.reply.SetValue(draft)
+			m.reply.CursorEnd()
+			m.layout()
+			return m.reply.Focus()
+		}
+	case "x":
+		if a := m.agent(); a != nil {
+			if m.closing != a.pane {
+				m.closing = a.pane // the status line asks for confirmation
+				return nil
+			}
+			m.closing = ""
+			// Detached: stopping the agent takes up to 5 s and must finish even if the popup closes meanwhile.
+			cmd := exec.Command(m.mainSh, "close_agent", a.pane)
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+			if cmd.Start() == nil {
+				go cmd.Wait()
+			}
+		}
+	case "esc":
+		if m.closing != "" {
+			m.closing = ""
+			return nil
+		}
+		return tea.Quit
+	case "q", "ctrl+c":
+		return tea.Quit
+	}
+	return nil
+}
+
+func (m *model) setDraft(a *agent, text string) bool {
+	var reply struct{ OK bool }
+	return agentsocket.Request(a.socket, map[string]string{"op": "set_draft", "text": text}, &reply) == nil && reply.OK
+}
+
+func (m *model) replyKey(msg tea.KeyMsg) tea.Cmd {
+	a := m.agent()
+	switch msg.String() {
+	case "enter":
+		if a != nil {
+			if a.sharesDraft() && m.setDraft(a, m.reply.Value()) {
+				m.main("reply_agent", a.pane, "") // Enter submits the draft we just wrote
+			} else {
+				m.main("reply_agent", a.pane, m.reply.Value())
+			}
+		}
+		m.closeReply()
+		m.reload()
+		return nil
+	case "ctrl+j":
+		m.reply.InsertString("\n")
+		return nil
+	case "esc":
+		if a != nil && a.sharesDraft() {
+			m.setDraft(a, m.reply.Value()) // keep the edits as the agent's draft
+		}
+		m.closeReply()
+		return nil
+	}
+	var cmd tea.Cmd
+	m.reply, cmd = m.reply.Update(msg)
+	return cmd
+}
+
+func (m *model) closeReply() {
+	m.replying = false
+	m.reply.Reset()
+	m.reply.Blur()
+	m.layout()
+}
+
+func (m *model) listWidth() int { return m.width * 35 / 100 }
+func (m *model) chatWidth() int { return max(1, m.width-m.listWidth()-3) } // border and padding
+
+func (m *model) chatHeight() int {
+	h := m.height - 2 // status and help lines
+	if m.replying {
+		h -= m.reply.Height() + 1
+	}
+	return max(1, h)
+}
+
+func (m *model) layout() {
+	m.reply.SetWidth(m.chatWidth())
+	m.chat.SetSize(m.chatWidth(), m.chatHeight())
+}
+
+func (m *model) label(a agent, selected bool) string {
+	style, ok := stateStyles[a.state]
+	if !ok {
+		style.icon = " "
+	}
+	icon, note := style.icon, ""
+	switch {
+	case a.state == "working":
+		icon = string(spinner[m.frame%len(spinner)])
+	case a.state == "blocked":
+		note = " needs input"
+	case a.unread != "":
+		icon, note = "●", " finished"
+	}
+	name := a.title
+	if name == "" {
+		name = a.command
+	}
+	color := lipgloss.NewStyle().Foreground(style.color)
+	gutter := " "
+	if selected {
+		gutter = marker
+	}
+	width := m.listWidth()
+	first := gutter + color.Render(icon) + " " + bold.Render(name) + color.Render(note)
+	second := gutter + "  " + dim.Render(fmt.Sprintf("%s · %s · %s", a.target, a.command, a.path))
+	return ansi.Truncate(first, width, "…") + "\n" + ansi.Truncate(second, width, "…")
+}
+
+func (m *model) status() string {
+	a := m.agent()
+	switch {
+	case a == nil:
+		return ""
+	case m.closing == a.pane:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("press x again to stop this agent and close its pane, esc to cancel")
+	case a.transcript == "":
+		return dim.Render("no session reported: restart the agent after installing the hooks")
+	case a.state == "blocked":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("● waiting for you")
+	case a.state != "working":
+		return ""
+	}
+	doing := "working…"
+	switch {
+	case m.live.Tool != "":
+		doing = "running " + m.live.Tool + "…"
+	case m.live.Thinking:
+		doing = "thinking…"
+	case m.live.Streaming:
+		doing = "writing…"
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render(string(spinner[m.frame%len(spinner)]) + " " + doing)
+}
+
+func (m *model) View() string {
+	if m.width == 0 {
+		return ""
+	}
+	body := m.height - 1
+	var items []string
+	for i, a := range m.agents {
+		items = append(items, m.label(a, i == m.selected))
+	}
+	list := lipgloss.NewStyle().Width(m.listWidth()).Height(body).MaxHeight(body).Render(strings.Join(items, "\n"))
+	right := []string{m.chat.View(), " " + m.status()}
+	if m.replying {
+		right = append(right, border.Render(strings.Repeat("─", m.chatWidth())), m.reply.View())
+	}
+	sep := border.Render(strings.Repeat("│\n", body-1) + "│")
+	main := lipgloss.JoinHorizontal(lipgloss.Top, list, sep, " ", strings.Join(right, "\n"))
+	help := "↑↓ select · ⏎ switch · ^r reply · pgup/pgdn scroll · x close agent · q/esc close"
+	if m.replying {
+		help = "⏎ send · ^j newline · esc keep as draft"
+	}
+	return main + "\n" + dim.Render(ansi.Truncate(help, m.width, "…"))
+}
+
+func main() {
+	if len(os.Args) != 2 {
+		fmt.Fprintln(os.Stderr, "Usage: tmux-agents <path to main.sh>")
+		os.Exit(1)
+	}
+	reply := textarea.New()
+	reply.ShowLineNumbers = false
+	reply.Prompt = ""
+	reply.SetHeight(4)
+	reply.Placeholder = "reply (empty = just Enter)"
+	m := &model{mainSh: os.Args[1], transcripts: map[string]*transcript.Transcript{}, wanted: chatBlocks, reply: reply}
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	m.send = p.Send
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}

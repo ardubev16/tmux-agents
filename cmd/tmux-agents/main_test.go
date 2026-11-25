@@ -1,0 +1,249 @@
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ardubev16/tmux-agents/internal/transcript"
+	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
+)
+
+// fakeAgent is the omp integration's socket: it serves a draft and pushes live snapshots.
+type fakeAgent struct {
+	draft string
+	subs  chan net.Conn
+}
+
+func serveAgent(t *testing.T, draft string) (*fakeAgent, string) {
+	dir, _ := os.MkdirTemp("/tmp", "ta") // unix socket paths are capped at ~100 bytes
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "a.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	agent := &fakeAgent{draft: draft, subs: make(chan net.Conn, 1)}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			var req struct{ Op, Text string }
+			line, _ := bufio.NewReader(conn).ReadBytes('\n')
+			json.Unmarshal(line, &req)
+			switch req.Op {
+			case "get_draft":
+				json.NewEncoder(conn).Encode(map[string]string{"draft": agent.draft})
+			case "set_draft":
+				agent.draft = req.Text
+				conn.Write([]byte(`{"ok":true}` + "\n"))
+			case "subscribe":
+				agent.subs <- conn
+				continue
+			}
+			conn.Close()
+		}
+	}()
+	return agent, path
+}
+
+func (a *fakeAgent) push(t *testing.T, live map[string]any) {
+	conn := <-a.subs
+	defer func() { a.subs <- conn }()
+	if err := json.NewEncoder(conn).Encode(live); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fakeMain stands in for main.sh: a blocked agent without a session, a working titled one with a long
+// transcript, and a finished one nobody has looked at yet. Calls are logged.
+func fakeMain(t *testing.T, socket string) (string, func() []string) {
+	dir := t.TempDir()
+	var b strings.Builder
+	b.WriteString(`{"type":"title","title":"Fix the bug"}` + "\n")
+	for i := range 100 {
+		parent := any(nil)
+		if i > 0 {
+			parent = fmt.Sprint(i - 1)
+		}
+		line, _ := json.Marshal(map[string]any{"type": "message", "id": fmt.Sprint(i), "parentId": parent,
+			"message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": fmt.Sprintf("answer %d", i)}}}})
+		b.Write(append(line, '\n'))
+	}
+	session := filepath.Join(dir, "t.jsonl")
+	os.WriteFile(session, []byte(b.String()), 0o644)
+	log := filepath.Join(dir, "calls")
+	script := filepath.Join(dir, "main.sh")
+	os.WriteFile(script, []byte(fmt.Sprintf(`#!/usr/bin/env bash
+printf '%%s\n' "$*" >>'%[1]s'
+case "$1" in
+list_agents)
+    printf '%%%%1\tblocked\ts:1.0\tclaude\t~/a\t\t\t\n'
+    printf '%%%%2\tworking\ts:2.0\tomp\t~/b\t%[2]s\t%[3]s\t\n'
+    grep -q '^close_agent %%3' '%[1]s' || printf '%%%%3\tdone\ts:3.0\tomp\t~/c\t\t\t1\n' ;;
+esac
+`, log, session, socket)), 0o755)
+	return script, func() []string {
+		out, _ := os.ReadFile(log)
+		return strings.Split(strings.TrimSpace(string(out)), "\n")
+	}
+}
+
+func newModel(t *testing.T, socket string) (*model, chan tea.Msg, func() []string) {
+	script, calls := fakeMain(t, socket)
+	msgs := make(chan tea.Msg, 100)
+	m := &model{mainSh: script, send: func(msg tea.Msg) { msgs <- msg }, transcripts: map[string]*transcript.Transcript{},
+		wanted: chatBlocks, reply: textarea.New()}
+	m.Init()
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	return m, msgs, calls
+}
+
+func press(m *model, keys ...string) {
+	for _, k := range keys {
+		var msg tea.KeyMsg
+		switch k {
+		case "enter":
+			msg = tea.KeyMsg{Type: tea.KeyEnter}
+		case "esc":
+			msg = tea.KeyMsg{Type: tea.KeyEsc}
+		case "down":
+			msg = tea.KeyMsg{Type: tea.KeyDown}
+		case "pgup":
+			msg = tea.KeyMsg{Type: tea.KeyPgUp}
+		case "ctrl+r":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlR}
+		case "ctrl+j":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlJ}
+		default:
+			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+		}
+		m.Update(msg)
+	}
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+func TestListShowsNamesAndWhatNeedsYou(t *testing.T) {
+	m, _, _ := newModel(t, "")
+	var firsts []string
+	for i, a := range m.agents {
+		firsts = append(firsts, strings.TrimSpace(strings.SplitN(ansi.Strip(m.label(a, i == 0)), "\n", 2)[0]))
+	}
+	if firsts[0] != "▌● claude needs input" || !strings.HasSuffix(firsts[1], "Fix the bug") || firsts[2] != "● omp finished" {
+		t.Errorf("labels: %q", firsts)
+	}
+}
+
+func TestChatShowsTheNewestAndLoadsOlderOnScroll(t *testing.T) {
+	m, _, _ := newModel(t, "")
+	press(m, "down")
+	if got := len(m.chat.Blocks); got != chatBlocks || !m.chat.More {
+		t.Fatalf("blocks=%d more=%v", got, m.chat.More)
+	}
+	for range 40 {
+		press(m, "pgup")
+	}
+	if got := len(m.chat.Blocks); got <= chatBlocks {
+		t.Errorf("scrolling to the top did not load older blocks: %d", got)
+	}
+}
+
+func TestReplyContinuesTheAgentsDraft(t *testing.T) {
+	agent, socket := serveAgent(t, "half typed")
+	m, _, calls := newModel(t, socket)
+	press(m, "down", "ctrl+r")
+	if got := m.reply.Value(); got != "half typed" {
+		t.Fatalf("reply starts with %q", got)
+	}
+	press(m, " ", "o", "k", "ctrl+j", "x", "esc")
+	if agent.draft != "half typed ok\nx" {
+		t.Errorf("cancelling should keep the edits in the agent: %q", agent.draft)
+	}
+	press(m, "ctrl+r", "!", "enter")
+	if agent.draft != "half typed ok\nx!" || !contains(calls(), "reply_agent %2 ") {
+		t.Errorf("draft %q, calls %q", agent.draft, calls())
+	}
+}
+
+func TestBlockedAgentReplyTypesIntoThePane(t *testing.T) {
+	m, _, calls := newModel(t, "")
+	press(m, "ctrl+r", "y", "e", "s", "enter")
+	if !contains(calls(), "reply_agent %1 yes") {
+		t.Errorf("calls %q", calls())
+	}
+}
+
+func TestLiveReplyAndQueuedPromptsStream(t *testing.T) {
+	agent, socket := serveAgent(t, "")
+	m, msgs, _ := newModel(t, socket)
+	press(m, "down")
+	agent.push(t, map[string]any{"text": "streaming **now**", "streaming": true, "queued": []string{"also do this"}})
+	select {
+	case msg := <-msgs:
+		m.Update(msg)
+	case <-time.After(2 * time.Second):
+		t.Fatal("no live update")
+	}
+	var lines []string
+	for _, l := range m.chat.Lines() {
+		if s := strings.TrimSpace(ansi.Strip(l)); s != "" {
+			lines = append(lines, s)
+		}
+	}
+	tail := strings.Join(lines[len(lines)-5:], "\n") // reply, then the quoted prompt with its marker
+	if !strings.Contains(tail, "streaming now") || !strings.Contains(tail, "also do this") || !strings.Contains(tail, "queued") {
+		t.Errorf("tail:\n%s", tail)
+	}
+	if !strings.Contains(ansi.Strip(m.status()), "writing") {
+		t.Errorf("status %q", ansi.Strip(m.status()))
+	}
+}
+
+func TestEnterSwitchesAndCloses(t *testing.T) {
+	m, _, calls := newModel(t, "")
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || cmd() != tea.Quit() || !contains(calls(), "switch_agent %1") {
+		t.Errorf("calls %q", calls())
+	}
+}
+
+func TestQClosesButTypesInAReply(t *testing.T) {
+	m, _, calls := newModel(t, "")
+	press(m, "ctrl+r", "q", "enter")
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	if !contains(calls(), "reply_agent %1 q") || cmd == nil || cmd() != tea.Quit() {
+		t.Errorf("calls %q", calls())
+	}
+}
+
+func TestCloseNeedsConfirmation(t *testing.T) {
+	m, _, calls := newModel(t, "")
+	press(m, "down", "down", "x", "esc", "x")
+	if contains(calls(), "close_agent %3") {
+		t.Fatal("closed without confirmation")
+	}
+	press(m, "x")
+	time.Sleep(300 * time.Millisecond) // close runs detached
+	if !contains(calls(), "close_agent %3") {
+		t.Errorf("calls %q", calls())
+	}
+}

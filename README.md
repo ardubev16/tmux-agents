@@ -80,8 +80,8 @@ reused. A branch that doesn't exist yet is created from the current `HEAD`.
 
 ## Installation
 
-Dependencies: `git`, `fzf`, `jq`, `notify-send` (optional, desktop notifications), [`uv`](https://docs.astral.sh/uv/) (the dashboard is a Python app; its first
-launch sets up the plugin's `.venv`), tmux ≥ 3.2 (popups).
+Dependencies: `git`, `fzf`, `jq`, `notify-send` (optional, desktop notifications), [Go](https://go.dev/dl/) (the
+dashboard is built on its first launch), tmux ≥ 3.2 (popups).
 
 ### Tmux Plugin Manager (recommended)
 

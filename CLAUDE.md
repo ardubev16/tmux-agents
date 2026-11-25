@@ -21,13 +21,14 @@ See README.md for user-facing usage, keybindings, and configuration options.
   - `_common.sh` — generic helpers (git metadata, worktree creation, fzf branch picker,
     error trap/`die`). Sourced by every other script in this directory.
   - `dashboard.sh`, `select_branch.sh`, `worktree.sh` — thin entry points run in popups or
-    by `main.sh`. `dashboard.sh` launches the Python dashboard via `uv run`.
-- `src/tmux_agents/` — the dashboard TUI (Textual, uv package). Calls back into `main.sh` for
-  anything touching tmux, so it stays tmux-free like `scripts/`.
-  - `transcript.py` — omp and Claude Code JSONL session files → Markdown blocks.
-  - `chat.py` — line-API scroll view rendering those blocks with Rich Markdown at the view
-    width (wraps prose, code and tables; cached per width) plus a live streaming tail.
-  - `agent_socket.py` — NDJSON client for the agent socket (draft get/set, live stream).
+    by `main.sh`. `dashboard.sh` builds the Go dashboard into `bin/` when missing or stale, then runs it.
+- `cmd/tmux-agents/` — the dashboard TUI (Go, Bubble Tea). Calls back into `main.sh` for anything
+  touching tmux, so it stays tmux-free like `scripts/`.
+  - `internal/transcript` — omp and Claude Code JSONL session files → Markdown blocks, read from
+    the end (only the newest part is parsed; polls parse just the appended lines).
+  - `internal/chat` — scroll view rendering those blocks with Glamour at the view width
+    (hard-wraps what Glamour cannot, so nothing is cut; cached per width) plus a live tail.
+  - `internal/agentsocket` — NDJSON client for the agent socket (draft get/set, live stream).
 - `integrations/` — harness hooks that call `"$TMUX_AGENTS" state|session …`. `omp.ts` also
   serves the agent socket; Claude Code has no equivalent, so it gets no streaming or drafts.
 
@@ -40,5 +41,5 @@ Use [bats-core](https://github.com/bats-core/bats-core) (`bats`) for tests. See
 `bash -c` snippet (stub `tmux` as a shell function if needed) and assert on `$status`/
 `$output` from bats' `run`. Run with `bats tests/`.
 
-The dashboard is tested with pytest + Textual's `run_test` pilot against a fake `main.sh`
-(`tests/test_dashboard.py`). Run with `uv run pytest`.
+The dashboard is tested with `go test ./...`: transcript parsing, chat wrapping, and the model
+driven key by key against a fake `main.sh` and a fake agent socket (`cmd/tmux-agents/main_test.go`).
