@@ -115,7 +115,19 @@ function status_bar() {
 }
 
 function agent_dashboard() {
-    tmux display-popup -w 90% -h 90% -E "'$SCRIPTS_DIR/dashboard.sh' '$MAIN'"
+    tmux display-popup -w 90% -h 90% -E "'$MAIN' dashboard"
+}
+
+# Popup body: builds the Go dashboard on first use and after the sources change (e.g. a plugin update).
+function dashboard() {
+    local -r root="$(dirname "$MAIN")"
+    local -r bin="$root/bin/tmux-agents"
+    if [[ ! -x $bin || -n $(find "$root/cmd" "$root/internal" "$root/go.mod" "$root/go.sum" -newer "$bin" -print -quit) ]]; then
+        command -v go &>/dev/null || die "tmux-agents: the dashboard needs Go to build (https://go.dev/dl/)."
+        echo "Building the dashboard…"
+        (cd "$root" && go build -o "$bin" ./cmd/tmux-agents) || die "tmux-agents: building the dashboard failed."
+    fi
+    exec "$bin" "$MAIN"
 }
 
 function switch_agent() {
@@ -152,18 +164,20 @@ function reply_agent() {
 
 function new_worktree() {
     local -r current_path=$(tmux display-message -p '#{pane_current_path}')
-    local -r tmpfile="$(mktemp)"
+    tmux display-popup -E "'$MAIN' pick_worktree '$current_path'"
+}
 
-    local popup_exit=0
-    tmux display-popup -E "'$SCRIPTS_DIR/select_branch.sh' '$current_path' '$tmpfile'" || popup_exit=$?
-
-    local -r branch="$(<"$tmpfile")"
-    rm -f "$tmpfile"
-
-    [[ $popup_exit == 130 || -z $branch ]] && return 0
+# Popup body: pick a branch, create or reuse its worktree, switch to a session rooted there. Errors stay on
+# screen until a key is pressed (die/the error trap pause in a popup).
+function pick_worktree() {
+    local -r current_path="$1"
+    local repo branch
+    repo=$(repo_root "$current_path")
+    branch=$(select_branch "$current_path") || return 0 # cancelled
+    [[ -n $branch ]] || return 0
 
     local wt_path
-    wt_path=$("$SCRIPTS_DIR/worktree.sh" "$current_path" "$branch" "$(tmux_option @tmux_agents_worktree_dir "")")
+    wt_path=$(ensure_worktree "$current_path" "$branch" "$(tmux_option @tmux_agents_worktree_dir "")")
 
     # Reuse any session already rooted there (e.g. the main checkout opened by a sessionizer).
     local session
@@ -171,10 +185,7 @@ function new_worktree() {
         awk -F '\t' -v path="$wt_path" '$1 == path { print $2; exit }')
 
     if [[ -z $session ]]; then
-        local repo_full_path repo_name project_name
-        get_repo_metadata repo_full_path repo_name project_name "$current_path"
-        session=$(tr '.:' '__' <<<"$repo_name@$branch")
-
+        session=$(tr '.:' '__' <<<"$(basename "$repo")@$branch")
         tmux new-session -ds "$session" -c "$wt_path"
         local -r command="$(tmux_option @tmux_agents_worktree_command "")"
         [[ -n $command ]] && tmux send-keys -t "=$session:" "$command" Enter
@@ -195,11 +206,13 @@ state) set_state "$@" ;;
 session) set_session "$@" ;;
 status_bar) status_bar "$@" ;;
 agent_dashboard) agent_dashboard "$@" ;;
+dashboard) dashboard "$@" ;;
 list_agents) list_agents "$@" ;;
 switch_agent) switch_agent "$@" ;;
 close_agent) close_agent "$@" ;;
 seen) seen "$@" ;;
 reply_agent) reply_agent "$@" ;;
 new_worktree) new_worktree "$@" ;;
+pick_worktree) pick_worktree "$@" ;;
 *) die "Unknown command: $command" ;;
 esac

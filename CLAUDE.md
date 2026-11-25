@@ -10,20 +10,20 @@ See README.md for user-facing usage, keybindings, and configuration options.
 - `main.tmux` — plugin entrypoint sourced by tmux/TPM. Reads `@tmux_agents_*` options,
   binds keys, exports `TMUX_AGENTS` (path to `main.sh`) for agent hooks, wires up the
   status bar placeholder.
-- `main.sh` — the only file allowed to call `tmux` directly. Dispatches subcommands
-  (`state`, `session`, `status_bar`, `agent_dashboard` and its callbacks, `new_worktree`).
+- `main.sh` — the single entry point: every key binding, hook, popup body and dashboard callback
+  is a subcommand (`state`, `session`, `status_bar`, `agent_dashboard`/`dashboard`,
+  `new_worktree`/`pick_worktree`, the dashboard's `list_agents`/`switch_agent`/…). Popups run
+  `main.sh <subcommand>` directly, so no state is passed back through temp files or exit codes.
+  `dashboard` builds the Go dashboard into `bin/` when missing or stale, then execs it.
   Per-pane options: `@tmux_agents_state`, plus what `session` reports: the agent's session
   file (`@tmux_agents_transcript`) and, for omp, its socket (`@tmux_agents_socket`).
   `@tmux_agents_unread` marks a pane that finished while not visible; tmux hooks set in
   `main.tmux` clear it (`main.sh seen`) when the pane is shown.
-- `scripts/` — everything here must run standalone, with no dependency on tmux being
-  present or active.
-  - `_common.sh` — generic helpers (git metadata, worktree creation, fzf branch picker,
-    error trap/`die`). Sourced by every other script in this directory.
-  - `dashboard.sh`, `select_branch.sh`, `worktree.sh` — thin entry points run in popups or
-    by `main.sh`. `dashboard.sh` builds the Go dashboard into `bin/` when missing or stale, then runs it.
+- `scripts/_common.sh` — tmux-free helpers sourced by `main.sh` (error trap/`die`, `repo_root`,
+  `ensure_worktree`, the fzf `select_branch`), kept apart so tests can source them without tmux.
 - `cmd/tmux-agents/` — the dashboard TUI (Go, Bubble Tea). Calls back into `main.sh` for anything
-  touching tmux, so it stays tmux-free like `scripts/`.
+  touching tmux, so tmux formats and pane options live in one place (`list_agents` also feeds the
+  status bar).
   - `internal/transcript` — omp and Claude Code JSONL session files → Markdown blocks, read from
     the end (only the newest part is parsed; polls parse just the appended lines).
   - `internal/chat` — scroll view rendering those blocks with Glamour at the view width
@@ -32,7 +32,7 @@ See README.md for user-facing usage, keybindings, and configuration options.
 - `integrations/` — harness hooks that call `"$TMUX_AGENTS" state|session …`. `omp.ts` also
   serves the agent socket; Claude Code has no equivalent, so it gets no streaming or drafts.
 
-Rule of thumb: `main.sh` = tmux; everything in `scripts/` = tmux-free glue.
+Rule of thumb: tmux logic goes in `main.sh`; logic worth testing without tmux goes in `_common.sh`.
 
 ## Testing
 

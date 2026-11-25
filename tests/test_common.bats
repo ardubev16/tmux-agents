@@ -39,8 +39,8 @@ run_case() {
     [[ "$output" == *"custom problem"* ]]
 }
 
-@test "soft-fail: get_repo_metadata reports Not a git repo, then trap fires" {
-    run_case off 'get_repo_metadata a b c /nonexistent-path-xyz'
+@test "soft-fail: repo_root reports Not a git repo, then trap fires" {
+    run_case off 'repo_root /nonexistent-path-xyz'
     [[ "$output" == *"Not a git repo."* ]]
     [[ "$output" == *"unexpected error"* ]]
 }

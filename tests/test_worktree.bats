@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# ensure_worktree against throwaway git repos. Run: bats tests/test_worktree.bats
+# ensure_worktree and select_branch against throwaway git repos. Run: bats tests/test_worktree.bats
 
 setup() {
     SCRIPTS_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/../scripts"
@@ -9,7 +9,23 @@ setup() {
     git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
 }
 
-worktree() { run "$SCRIPTS_DIR/worktree.sh" "$@" </dev/null; }
+worktree() { run bash -c '. "$1/_common.sh"; shift; ensure_worktree "$@"' _ "$SCRIPTS_DIR" "$@" </dev/null; }
+
+# select_branch with fzf stubbed: $1 is what fzf prints, $2 its exit status.
+pick() {
+    run bash -c '. "$1/_common.sh"; out=$2 code=$3; fzf() { cat >/dev/null; printf "%b" "$out"; return "$code"; }
+        select_branch "$4" || echo cancelled' \
+        _ "$SCRIPTS_DIR" "$1" "$2" "$REPO"
+}
+
+@test "select_branch: picked branch, typed new branch, cancel" {
+    pick 'quer\n  feat/y\n' 0
+    [ "$output" = feat/y ]
+    pick 'new/z\n' 1
+    [ "$output" = new/z ]
+    pick '' 130
+    [ "$output" = cancelled ]
+}
 
 @test "new branch: created off HEAD under <project>/.worktrees/<repo>/<branch>" {
     worktree "$REPO" feat/x
