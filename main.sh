@@ -1,9 +1,35 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -Eeuo pipefail
+shopt -s inherit_errexit
 
-# shellcheck source=scripts/_common.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/_common.sh"
+declare debug_enabled=""
+[[ "${TMUX_AGENTS_DEBUG:-}" == on ]] && debug_enabled=1
+
+function _pause() {
+    [[ -t 0 ]] || return 0
+    read -rsn1 -p "Press any key to close this pane..." >&2
+    echo >&2
+}
+
+function die() {
+    echo "$1" >&2
+    _pause
+    exit 1
+}
+
+function _err_trap() {
+    local -r exit_code=$? line=$1 command=$2
+
+    if [[ -n $debug_enabled ]]; then
+        echo "tmux-agents: error (exit $exit_code) at line $line: $command" >&2
+    else
+        echo "tmux-agents: unexpected error (exit $exit_code). Set '@tmux_agents_debug on' for details." >&2
+    fi
+    _pause
+    exit "$exit_code"
+}
+trap '_err_trap $LINENO "$BASH_COMMAND"' ERR
 
 MAIN="$(realpath "${BASH_SOURCE[0]}")"
 declare -r MAIN
@@ -219,6 +245,86 @@ function reply_agent() {
     tmux send-keys -t "$pane" Enter
 }
 
+# Prints the main checkout of the repo containing $1, also when $1 is inside a worktree.
+function repo_root() {
+    local git_dir
+    git_dir=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+        echo "Not a git repo." >&2
+        return 1
+    }
+    dirname "$git_dir"
+}
+
+# Prints "open <branch>" for the picked branch or the typed query (a new branch), "remove <branch>" when
+# ctrl-x was pressed on one; fails when cancelled (Esc/Ctrl-C).
+function select_branch() {
+    local branches fzf_out
+    branches=$(git -C "$1" branch)
+    # Exit 1 means no match: the query names a new branch. Anything else (130) is a cancel; return explicitly,
+    # since callers run this in `|| …`, where errexit does not apply.
+    fzf_out=$({
+        grep '^\*' <<<"$branches"
+        grep -v '^\*' <<<"$branches"
+    } | fzf --print-query --expect=ctrl-x --prompt="⎇ branch: " --header="enter: open · ctrl-x: remove its worktree") ||
+        [[ $? == 1 ]] || return 1
+
+    local -r query=$(sed -n '1p' <<<"$fzf_out") key=$(sed -n '2p' <<<"$fzf_out") selection=$(sed -n '3p' <<<"$fzf_out")
+    if [[ $key == ctrl-x ]]; then
+        echo "remove ${selection:2}"
+    elif [[ -n $selection ]]; then
+        echo "open ${selection:2}"
+    else
+        echo "open $query"
+    fi
+}
+
+# Prints the checkout of repo $1 that has branch $2 checked out, if any.
+function worktree_of() {
+    git -C "$1" worktree list --porcelain |
+        awk -v ref="branch refs/heads/$2" '/^worktree /{ wt = substr($0, 10) } $0 == ref { print wt; exit }'
+}
+
+# Prints the checkout path for $branch, creating a worktree under
+# ${base_dir:-<project>/.worktrees}/<repo>/<branch> if none has it checked out.
+function ensure_worktree() {
+    local -r path="$1" branch="$2" base_dir="${3:-}"
+    local repo
+    repo=$(repo_root "$path")
+
+    local existing
+    existing=$(worktree_of "$repo" "$branch")
+    if [[ -n $existing ]]; then
+        echo "$existing"
+        return 0
+    fi
+
+    local -r wt_path="${base_dir:-$(dirname "$repo")/.worktrees}/$(basename "$repo")/$branch"
+    # Existing local or remote-tracking branch: let git check it out (DWIM), otherwise branch off HEAD.
+    if git -C "$repo" show-ref --quiet "refs/heads/$branch" ||
+        [[ -n $(git -C "$repo" for-each-ref --format=x "refs/remotes/*/$branch") ]]; then
+        git -C "$repo" worktree add --quiet "$wt_path" "$branch" >&2
+    else
+        git -C "$repo" worktree add --quiet -b "$branch" "$wt_path" >&2
+    fi
+
+    echo "$wt_path"
+}
+
+# Removes the worktree that has $branch checked out and prints its path. Never the main checkout; git refuses
+# a worktree with uncommitted changes. Returns explicitly: callers run this in `if`, where errexit does not apply.
+function remove_worktree() {
+    local -r path="$1" branch="$2"
+    local repo wt
+    repo=$(repo_root "$path") || return 1
+    wt=$(worktree_of "$repo" "$branch")
+    if [[ -z $wt || $wt == "$repo" ]]; then
+        echo "$branch has no worktree to remove (the main checkout stays)." >&2
+        return 1
+    fi
+    git -C "$repo" worktree remove "$wt" >&2 || return 1
+    echo "$wt"
+}
+
 function new_worktree() {
     local -r current_path=$(tmux display-message -p '#{pane_current_path}')
     # The path goes in as the popup's directory, not into its command line, so quotes in it are harmless.
@@ -278,6 +384,9 @@ function remove_branch_worktree() {
         tmux kill-session -t "$id"
     done < <(tmux list-sessions -F '#{session_path}	#{session_id}' | awk -F '\t' -v path="$wt" '$1 == path { print $2 }')
 }
+
+# Sourced (by the tests), main.sh only defines its functions; run, it is the command below.
+[[ ${BASH_SOURCE[0]} == "$0" ]] || return 0
 
 if [[ $# -lt 1 ]]; then
     die "Usage: main.sh <command> [args...]"

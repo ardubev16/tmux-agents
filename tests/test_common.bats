@@ -1,18 +1,17 @@
 #!/usr/bin/env bats
-# Self-check for the debug/error-handling helpers in scripts/_common.sh.
-# No tmux binary required - _common.sh has no knowledge of it.
+# Self-check for the debug/error-handling helpers in main.sh, sourced without tmux.
 # Run: bats tests/test_common.bats
 
 setup() {
-    SCRIPTS_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/../scripts"
+    MAIN="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/../main.sh"
 }
 
 # Runs $2 in a throwaway bash subprocess with debug/stdin set, after sourcing
-# _common.sh. Uses bats' run, so callers assert on $status/$output.
+# main.sh. Uses bats' run, so callers assert on $status/$output.
 run_case() {
     local -r debug="$1" snippet="$2"
     TMUX_AGENTS_DEBUG="$debug" run bash -c '
-        . "'"$SCRIPTS_DIR"'/_common.sh"
+        . "'"$MAIN"'"
         '"$snippet"'
     ' </dev/null
 }

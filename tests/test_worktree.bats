@@ -2,20 +2,20 @@
 # ensure_worktree and select_branch against throwaway git repos. Run: bats tests/test_worktree.bats
 
 setup() {
-    SCRIPTS_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/../scripts"
+    MAIN="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/../main.sh"
     PROJECT="$BATS_TEST_TMPDIR/project"
     REPO="$PROJECT/repo"
     git init -q -b main "$REPO"
     git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
 }
 
-worktree() { run bash -c '. "$1/_common.sh"; shift; ensure_worktree "$@"' _ "$SCRIPTS_DIR" "$@" </dev/null; }
+worktree() { run bash -c '. "$1"; shift; ensure_worktree "$@"' _ "$MAIN" "$@" </dev/null; }
 
 # select_branch with fzf stubbed: $1 is what fzf prints, $2 its exit status.
 pick() {
-    run bash -c '. "$1/_common.sh"; out=$2 code=$3; fzf() { cat >/dev/null; printf "%b" "$out"; return "$code"; }
+    run bash -c '. "$1"; out=$2 code=$3; fzf() { cat >/dev/null; printf "%b" "$out"; return "$code"; }
         select_branch "$4" || echo cancelled' \
-        _ "$SCRIPTS_DIR" "$1" "$2" "$REPO"
+        _ "$MAIN" "$1" "$2" "$REPO"
 }
 
 @test "select_branch: picked branch, typed new branch, ctrl-x, cancel" {
@@ -32,17 +32,17 @@ pick() {
 @test "remove_worktree: removes a clean worktree, never the main checkout or one with changes" {
     worktree "$REPO" gone
     wt="$output"
-    run bash -c '. "$1/_common.sh"; remove_worktree "$2" gone' _ "$SCRIPTS_DIR" "$REPO"
+    run bash -c '. "$1"; remove_worktree "$2" gone' _ "$MAIN" "$REPO"
     [ "$status" -eq 0 ]
     [ "$output" = "$wt" ]
     [ ! -e "$wt" ]
 
-    run bash -c '. "$1/_common.sh"; remove_worktree "$2" main || echo refused' _ "$SCRIPTS_DIR" "$REPO"
+    run bash -c '. "$1"; remove_worktree "$2" main || echo refused' _ "$MAIN" "$REPO"
     [[ "$output" == *refused ]]
 
     worktree "$REPO" dirty
     touch "$output/new-file"
-    run bash -c '. "$1/_common.sh"; remove_worktree "$2" dirty || echo refused' _ "$SCRIPTS_DIR" "$REPO"
+    run bash -c '. "$1"; remove_worktree "$2" dirty || echo refused' _ "$MAIN" "$REPO"
     [[ "$output" == *refused ]]
     [ -e "$PROJECT/.worktrees/repo/dirty/new-file" ]
 }

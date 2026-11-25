@@ -107,7 +107,7 @@ EOF
     # A copy of the plugin, so the real bin/ stays untouched.
     local -r plugin="$BATS_TEST_TMPDIR/plugin"
     mkdir -p "$plugin"
-    cp -r "$(dirname "$MAIN")/main.sh" "$(dirname "$MAIN")/scripts" "$plugin/"
+    cp "$MAIN" "$plugin/"
     printf '#!/bin/sh\ncase $1 in -s) echo Linux ;; -m) echo aarch64 ;; esac\n' >"$BATS_TEST_TMPDIR/bin/uname"
     cat >"$BATS_TEST_TMPDIR/bin/curl" <<'EOF'
 #!/bin/sh
@@ -133,7 +133,7 @@ EOF
     local -r plugin="$BATS_TEST_TMPDIR/plugin"
     mkdir -p "$plugin/cmd" "$plugin/internal"
     touch "$plugin/go.mod" "$plugin/go.sum"
-    cp -r "$(dirname "$MAIN")/main.sh" "$(dirname "$MAIN")/scripts" "$plugin/"
+    cp "$MAIN" "$plugin/"
     printf '#!/bin/sh\necho "tmux $*" >>"$LOG"\ncase "$*" in *@tmux_agents_dashboard_build*) echo on ;; esac\n' \
         >"$BATS_TEST_TMPDIR/bin/tmux"
     cat >"$BATS_TEST_TMPDIR/bin/go" <<'EOF'

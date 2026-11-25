@@ -21,8 +21,8 @@ See README.md for user-facing usage, keybindings, and configuration options.
   file (`@tmux_agents_transcript`) and, for omp, its socket (`@tmux_agents_socket`).
   `@tmux_agents_unread` marks a pane that finished while not visible; tmux hooks set in
   `main.tmux` clear it (`main.sh seen`) when the pane is shown.
-- `scripts/_common.sh` — tmux-free helpers sourced by `main.sh` (error trap/`die`, `repo_root`,
-  `ensure_worktree`, the fzf `select_branch`), kept apart so tests can source them without tmux.
+  Sourced instead of run (as the tests do), it only defines its functions, so its tmux-free helpers
+  (error trap/`die`, `repo_root`, `ensure_worktree`, the fzf `select_branch`) can be tested without tmux.
 - `cmd/tmux-agents/` — the dashboard TUI (Go, Bubble Tea). Calls back into `main.sh` for anything
   touching tmux, so tmux formats and pane options live in one place (`list_agents` also feeds the
   status bar).
@@ -36,14 +36,15 @@ See README.md for user-facing usage, keybindings, and configuration options.
 - `integrations/` — harness hooks that call `"$TMUX_AGENTS" state|session …`. `omp.ts` also
   serves the agent socket; Claude Code has no equivalent, so it gets no streaming or drafts.
 
-Rule of thumb: tmux logic goes in `main.sh`; logic worth testing without tmux goes in `_common.sh`.
+Rule of thumb: logic goes in `main.sh`; keep what is worth testing without tmux in functions that do not
+call it.
 
 ## Testing
 
 Use [bats-core](https://github.com/bats-core/bats-core) (`bats`) for tests. See
-`tests/test_common.bats` for the pattern: source the script under test standalone in a
-`bash -c` snippet (stub `tmux` as a shell function if needed) and assert on `$status`/
-`$output` from bats' `run`. Run with `bats tests/`.
+`tests/test_common.bats` for the pattern: source `main.sh` in a `bash -c` snippet (stub `tmux` as a
+shell function or a script on `PATH` if needed) and assert on `$status`/`$output` from bats' `run`. Run
+with `bats tests/`.
 
 The dashboard is tested with `go test ./...`: transcript parsing, chat wrapping, and the model
 driven key by key against a fake `main.sh` and a fake agent socket (`cmd/tmux-agents/main_test.go`).
