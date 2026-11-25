@@ -23,7 +23,7 @@ type Shared = { ctx?: Ctx; live: Live; running: boolean; subscribers: Set<Socket
 
 export default function (pi: Pi): void {
   if (!process.env.TMUX_PANE) return;
-  const main = process.env.TMUX_AGENTS || fromTmux();
+  const main = mainSh();
   if (!main) return;
   const global = globalThis as { tmuxAgents?: Shared };
   const shared = (global.tmuxAgents ??= serve());
@@ -147,8 +147,9 @@ function serve(): Shared {
   return shared;
 }
 
-// Panes opened before the plugin loaded lack TMUX_AGENTS; the server's global environment has it.
-function fromTmux(): string | undefined {
+// The path to main.sh, from the tmux server's global environment: always current, also in panes opened before
+// the plugin loaded or after it moved.
+function mainSh(): string | undefined {
   try {
     const out = execFileSync("tmux", ["show-environment", "-g", "TMUX_AGENTS"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     return /^TMUX_AGENTS=(.+)$/m.exec(out)?.[1];

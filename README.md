@@ -36,7 +36,8 @@ run-shell ~/.tmux/plugins/tmux-agents/main.tmux
 
 Agents report to the plugin from inside their pane: `"$TMUX_AGENTS" state <working|blocked|done|clear>` on
 every state change, and `"$TMUX_AGENTS" session <session file> [socket]` when a session starts, so the dashboard
-can render its chat. Install the bundled hooks once:
+can render its chat. `TMUX_AGENTS` (the path to `main.sh`) comes from tmux's global environment:
+`tmux show-environment -g TMUX_AGENTS`. Install the bundled hooks once:
 
 ```sh
 ~/.tmux/plugins/tmux-agents/integrations/install.sh install    # or: uninstall
@@ -48,8 +49,7 @@ can render its chat. Install the bundled hooks once:
 - **Anything else**: call the commands above from the hooks your harness provides.
 
 Re-run `install` after updating the plugin, then restart running agents (they load hooks at startup). Run
-`uninstall` before removing the plugin: TPM has no removal hook. `TMUX_AGENTS` lives in tmux's global
-environment, so agents in panes opened before the plugin loaded find it too.
+`uninstall` before removing the plugin: TPM has no removal hook.
 
 ## Usage
 

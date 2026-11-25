@@ -41,14 +41,15 @@ EOF
     [ "$output" = '["Stop"]' ]
 }
 
-@test "claude hook finds TMUX_AGENTS through tmux when the pane predates the plugin" {
+@test "claude hook gets main.sh from tmux's global environment" {
     command=$(jq -r '.hooks.Stop[0].hooks[0].command' "$INTEGRATIONS/claude-hooks.json")
     mkdir -p "$BATS_TEST_TMPDIR/bin"
     printf '#!/bin/sh\necho "$@" >"%s/called"\n' "$BATS_TEST_TMPDIR" >"$BATS_TEST_TMPDIR/main.sh"
     printf '#!/bin/sh\necho "TMUX_AGENTS=%s/main.sh"\n' "$BATS_TEST_TMPDIR" >"$BATS_TEST_TMPDIR/bin/tmux"
     chmod +x "$BATS_TEST_TMPDIR/main.sh" "$BATS_TEST_TMPDIR/bin/tmux"
 
-    run env -u TMUX_AGENTS TMUX_PANE=%1 PATH="$BATS_TEST_TMPDIR/bin:$PATH" sh -c "$command"
+    # Always the path from tmux, also when the pane's environment has a stale one.
+    run env TMUX_AGENTS=/stale/main.sh TMUX_PANE=%1 PATH="$BATS_TEST_TMPDIR/bin:$PATH" sh -c "$command"
     [ "$status" -eq 0 ]
     [ "$(cat "$BATS_TEST_TMPDIR/called")" = "state done" ]
 

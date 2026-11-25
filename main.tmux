@@ -30,7 +30,7 @@ function init_tmux_agents() {
         debug=$(tmux_option "$debug_config" "off")
 
     tmux set-environment -g TMUX_AGENTS_DEBUG "$debug"
-    # Agent hooks call "$TMUX_AGENTS state <state>"; new panes inherit it, older ones read it via show-environment.
+    # Agent hooks read it with `tmux show-environment -g TMUX_AGENTS`, so it is current in every pane.
     tmux set-environment -g TMUX_AGENTS "$CURRENT_DIR/main.sh"
 
     tmux bind-key "$key_dashboard" run-shell "$CURRENT_DIR/main.sh agent_dashboard"
