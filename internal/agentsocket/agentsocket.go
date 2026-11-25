@@ -32,7 +32,7 @@ func Request(path string, request, reply any) error {
 		return err
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second)) // cannot fail on a fresh unix socket
 	if err := json.NewEncoder(conn).Encode(request); err != nil {
 		return err
 	}

@@ -122,8 +122,8 @@ func TestTitles(t *testing.T) {
 	}
 	for _, step := range []struct{ appended, want string }{
 		{`{"type":"user"}` + "\n", "renamed"},
-		{`{"type":"ai-title","aiTitle":"thi`, "renamed"},
-		{`rd"}` + "\n", "third"},
+		{`{"type":"ai-title","aiTi`, "renamed"},
+		{`tle":"third"}` + "\n", "third"},
 	} {
 		appendTo(step.appended)
 		if got := Title(claude); got != step.want {

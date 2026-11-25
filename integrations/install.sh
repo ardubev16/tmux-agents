@@ -38,6 +38,7 @@ function install() {
     fi
 
     if [[ -d $HOME/.claude ]]; then
+        # shellcheck disable=SC2016 # $ours and $e are jq variables
         write_claude_settings 'strip | .hooks = (reduce ($ours[0].hooks | to_entries[]) as $e (.hooks // {}; .[$e.key] += $e.value))'
         echo "claude: hooks added to $CLAUDE_SETTINGS"
     fi

@@ -37,13 +37,13 @@ function set_state() {
     # Only when you are not looking at the pane: mark it unread (done) and notify (done/blocked).
     local -r visible_format="#{&&:#{pane_active},#{&&:#{window_active},#{session_attached}}}"
     local -r visible=$(tmux display-message -p -t "$TMUX_PANE" "$visible_format")
-    if [[ $state == done && $visible != 1 ]]; then
+    if [[ $state == "done" && $visible != 1 ]]; then
         tmux set-option -p -t "$TMUX_PANE" "$unread_option" 1
     elif [[ $state != clear ]]; then
         tmux set-option -pu -t "$TMUX_PANE" "$unread_option"
     fi
-    if [[ ($state == done || $state == blocked) && $visible != 1 ]]; then
-        notify "$(agent_name "$TMUX_PANE") $([[ $state == done ]] && echo finished || echo 'needs input')"
+    if [[ ($state == "done" || $state == blocked) && $visible != 1 ]]; then
+        notify "$(agent_name "$TMUX_PANE") $([[ $state == "done" ]] && echo finished || echo 'needs input')"
     fi
 
     local client

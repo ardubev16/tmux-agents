@@ -1,5 +1,8 @@
 #!/usr/bin/env bats
 # main.sh's agent list and state reporting against a stub tmux. Run: bats tests/test_main.bats
+# shellcheck disable=SC2016 # the stub scripts are written with a literal $
+
+bats_require_minimum_version 1.5.0 # run !
 
 setup() {
     MAIN="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/../main.sh"
@@ -22,9 +25,9 @@ EOF
 @test "list_agents: blocked, unread done, done, working; skips non-agents and panes back at the shell" {
     printf '%s\t%s\t%s\t%s\t%s\t\t\t%s\t%s\n' \
         %1 working s:1.0 omp /a '' 100 \
-        %2 done s:2.0 claude /b '' 100 \
+        %2 "done" s:2.0 claude /b '' 100 \
         %3 blocked s:3.0 claude /c '' 100 \
-        %4 done s:4.0 omp /d 1 100 \
+        %4 "done" s:4.0 omp /d 1 100 \
         %5 '' s:5.0 zsh /tmp '' '' \
         %6 working s:6.0 zsh /tmp '' 100 >"$PANES"
     run "$MAIN" list_agents
@@ -53,18 +56,18 @@ EOF
     printf '#!/bin/sh\necho "tmux $*" >>"$LOG"\ncase "$*" in *@tmux_agents_state*) echo working ;; esac\n' >"$BATS_TEST_TMPDIR/bin/tmux"
     TMUX_PANE=%1 VISIBLE=1 run "$MAIN" state working
     [ "$status" -eq 0 ]
-    ! grep -q @tmux_agents_since "$LOG"
+    run ! grep -q @tmux_agents_since "$LOG"
 }
 
 @test "state done: marks unread and notifies only when the pane is not on screen" {
-    TMUX_PANE=%1 VISIBLE=0 run "$MAIN" state done
+    TMUX_PANE=%1 VISIBLE=0 run "$MAIN" state "done"
     [ "$status" -eq 0 ]
     grep -q 'set-option -p -t %1 @tmux_agents_unread 1' "$LOG"
     grep -q 'notify-send .*finished' "$LOG"
 
     : >"$LOG"
-    TMUX_PANE=%1 VISIBLE=1 run "$MAIN" state done
+    TMUX_PANE=%1 VISIBLE=1 run "$MAIN" state "done"
     [ "$status" -eq 0 ]
     grep -q 'set-option -pu -t %1 @tmux_agents_unread' "$LOG"
-    ! grep -q notify-send "$LOG"
+    run ! grep -q notify-send "$LOG"
 }

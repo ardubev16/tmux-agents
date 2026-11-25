@@ -36,7 +36,7 @@ func Start(cmd *exec.Cmd, width, height int, changed func()) (*Term, error) {
 		for {
 			n, err := p.Read(buf)
 			if n > 0 {
-				t.emu.Write(buf[:n])
+				_, _ = t.emu.Write(buf[:n]) // fails only once closed
 				changed()
 			}
 			if err != nil {
@@ -44,9 +44,9 @@ func Start(cmd *exec.Cmd, width, height int, changed func()) (*Term, error) {
 			}
 		}
 	}()
-	go io.Copy(p, t.emu) // keys, and the emulator's answers to the program's queries
+	go func() { _, _ = io.Copy(p, t.emu) }() // keys, and the emulator's answers to the program's queries
 	go func() {
-		cmd.Wait()
+		_ = cmd.Wait() // how it exited does not matter: the chat comes back either way
 		close(t.done)
 		changed()
 	}()
@@ -69,7 +69,7 @@ func (t *Term) Close() {
 }
 
 func (t *Term) Resize(width, height int) {
-	pty.Setsize(t.pty, &pty.Winsize{Cols: uint16(width), Rows: uint16(height)})
+	_ = pty.Setsize(t.pty, &pty.Winsize{Cols: uint16(width), Rows: uint16(height)}) // fails only once it exited
 	t.emu.Resize(width, height)
 }
 

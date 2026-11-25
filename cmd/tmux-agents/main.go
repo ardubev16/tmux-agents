@@ -193,7 +193,7 @@ func changes(dir string) string {
 		for _, part := range strings.Split(stat, ", ") {
 			var n int
 			var what string
-			fmt.Sscanf(part, "%d %s", &n, &what)
+			_, _ = fmt.Sscanf(part, "%d %s", &n, &what) // unknown parts leave n at 0
 			switch {
 			case strings.HasPrefix(what, "file"):
 				files = n
@@ -236,7 +236,7 @@ func (m *model) agentChanged() {
 		gen, stop, socket, send := m.liveGen, m.stop, a.socket, m.send
 		go func() {
 			// Errors mean the agent is gone or the socket is stale: the session file still shows the chat.
-			agentsocket.Subscribe(socket, stop, func(live agentsocket.Live) { send(liveMsg{gen, &live}) })
+			_ = agentsocket.Subscribe(socket, stop, func(live agentsocket.Live) { send(liveMsg{gen, &live}) })
 			send(liveMsg{gen, nil})
 		}()
 	}
@@ -412,7 +412,7 @@ func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 			cmd := exec.Command(m.mainSh, "close_agent", a.pane)
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 			if cmd.Start() == nil {
-				go cmd.Wait()
+				go func() { _ = cmd.Wait() }()
 			}
 		}
 	case "/":

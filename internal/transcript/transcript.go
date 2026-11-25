@@ -442,7 +442,7 @@ func readTitle(path string, size, from int64, title string) (string, int64) {
 	first, _, _ := bytes.Cut(head[:n], []byte("\n"))
 	if bytes.Contains(first, []byte(`"type":"title"`)) {
 		var omp struct{ Title string }
-		json.Unmarshal(first, &omp) // omp: rewritten in place on renames
+		_ = json.Unmarshal(first, &omp) // omp: rewritten in place on renames; unreadable means no title
 		return omp.Title, 0
 	}
 	searched := from
