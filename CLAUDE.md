@@ -43,3 +43,9 @@ Use [bats-core](https://github.com/bats-core/bats-core) (`bats`) for tests. See
 
 The dashboard is tested with `go test ./...`: transcript parsing, chat wrapping, and the model
 driven key by key against a fake `main.sh` and a fake agent socket (`cmd/tmux-agents/main_test.go`).
+
+## Commits
+
+Commit on your own whenever a change is complete and its checks pass; no need to ask. Every commit uses
+[Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `test:`, `docs:`, `ci:`,
+`chore:`, `refactor:`, optional scope, e.g. `feat(dashboard): …`). One logical change per commit.
