@@ -58,9 +58,9 @@ visible unless `allow-passthrough` is `all`; the plugin's notification covers th
 | `prefix + O` | Agent dashboard ("overview") popup: agents on the left, the highlighted agent's chat on the right, both updating live. `Enter` switch to it, `Ctrl-r` reply, `PgUp`/`PgDn` scroll the chat (scrolling to the top loads older messages), `x` twice close the agent, `q`/`Esc` close |
 | `prefix + W` | Pick a branch (fzf), create or reuse its worktree, and switch to a tmux session rooted there (reuses any session already there) |
 
-Agents are listed by the session name their harness gave them. Agents that need input (**needs input**) come
-first, then agents that finished while you were not looking at their pane (**finished**, cleared when you visit
-the pane), then the rest. Closing an agent (`x`, then `x` again to confirm) stops the harness like a normal exit
+Agents are listed by the session name their harness gave them, in three sections (empty ones are hidden):
+**Waiting** for your input, **Idle**, and **Running**. Idle agents that finished while you were not looking at
+their pane are marked **finished** until you visit it. Closing an agent (`x`, then `x` again to confirm) stops the harness like a normal exit
 (SIGTERM: omp and Claude Code run their shutdown hooks and save the session), then closes its pane.
 
 The chat is rendered from the agent's session file, so it wraps to the popup width (prose, code and tables) and
@@ -70,7 +70,7 @@ hooks report a session (the bundled omp and Claude Code integrations) show a cha
 The dashboard uses your terminal's colorscheme. omp agents also stream their in-progress reply, current activity
 (thinking, running a tool) and prompts queued while they work (shown as *queued* until delivered) into the
 dashboard, and share their prompt draft: `Ctrl-r` opens the half-typed prompt for editing, `Enter` submits it,
-`Ctrl-j` adds a newline, and `Esc` puts your edits back into the agent's prompt. For other agents, and for an
+`Ctrl-j` adds a newline, `Ctrl`/`Alt` + arrows move by word, and `Esc` puts your edits back into the agent's prompt. For other agents, and for an
 agent waiting on a dialog, a reply types your text followed by `Enter` into the pane; an empty reply sends just
 `Enter`, which accepts the highlighted option in a permission prompt.
 

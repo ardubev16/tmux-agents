@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ardubev16/tmux-agents/internal/transcript"
-	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -103,8 +101,8 @@ esac
 func newModel(t *testing.T, socket string) (*model, chan tea.Msg, func() []string) {
 	script, calls := fakeMain(t, socket)
 	msgs := make(chan tea.Msg, 100)
-	m := &model{mainSh: script, send: func(msg tea.Msg) { msgs <- msg }, transcripts: map[string]*transcript.Transcript{},
-		wanted: chatBlocks, reply: textarea.New()}
+	m := newDashboard(script)
+	m.send = func(msg tea.Msg) { msgs <- msg }
 	m.Init()
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return m, msgs, calls
@@ -142,14 +140,24 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-func TestListShowsNamesAndWhatNeedsYou(t *testing.T) {
+func TestListIsGroupedAndShowsNamesAndWhatNeedsYou(t *testing.T) {
 	m, _, _ := newModel(t, "")
-	var firsts []string
-	for i, a := range m.agents {
-		firsts = append(firsts, strings.TrimSpace(strings.SplitN(ansi.Strip(m.label(a, i == 0)), "\n", 2)[0]))
+	rows, owners := m.listRows()
+	var lines []string
+	for i, row := range rows {
+		if i == 0 || owners[i] != owners[i-1] { // section headers and each agent's first line
+			lines = append(lines, strings.TrimSpace(ansi.Strip(row)))
+		}
 	}
-	if firsts[0] != "▌● claude needs input" || !strings.HasSuffix(firsts[1], "Fix the bug") || firsts[2] != "● omp finished" {
-		t.Errorf("labels: %q", firsts)
+	want := []string{"Waiting", "● claude needs input", "Running", "Fix the bug", "Idle", "● omp finished"}
+	for i := range want {
+		if i >= len(lines) || !strings.HasSuffix(lines[i], want[i]) {
+			t.Fatalf("rows %q, want %q", lines, want)
+		}
+	}
+	m.agents = m.agents[:1] // no running or idle agents: no empty sections
+	if rows, _ := m.listRows(); len(rows) != 3 {
+		t.Errorf("rows %q", rows)
 	}
 }
 
@@ -245,5 +253,18 @@ func TestCloseNeedsConfirmation(t *testing.T) {
 	time.Sleep(300 * time.Millisecond) // close runs detached
 	if !contains(calls(), "close_agent %3") {
 		t.Errorf("calls %q", calls())
+	}
+}
+
+func TestCtrlArrowsMoveByWordInTheReply(t *testing.T) {
+	m, _, _ := newModel(t, "")
+	press(m, "ctrl+r", "one two three")
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlLeft})
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlLeft})
+	press(m, "X")
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlRight})
+	press(m, "Y")
+	if got := m.reply.Value(); got != "one Xtwo threeY" && got != "one XtwoY three" {
+		t.Errorf("reply %q", got)
 	}
 }

@@ -9,9 +9,10 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 )
 
@@ -26,10 +27,32 @@ type Chat struct {
 	renderer              *glamour.TermRenderer
 }
 
-func newRenderer(width int) *glamour.TermRenderer {
-	style := styles.DarkStyleConfig
+// ompStyle mirrors omp's colorful Markdown, from the terminal's ANSI palette: H1 magenta, H2 yellow,
+// H3-H6 blue, strong/emphasis magenta, inline code green, links cyan, muted rules and quote bars, prose
+// in the terminal's default foreground, headings without their `#` markers.
+func ompStyle() ansi.StyleConfig {
+	s := styles.DarkStyleConfig
+	color := func(c string) *string { return &c }
 	zero := uint(0)
-	style.Document.Margin = &zero
+	s.Document.Margin = &zero
+	s.Document.Color = nil
+	s.Heading.Color = nil
+	for i, h := range []*ansi.StyleBlock{&s.H1, &s.H2, &s.H3, &s.H4, &s.H5, &s.H6} {
+		h.Prefix, h.Suffix, h.BackgroundColor = "", "", nil
+		h.Color = color([]string{"5", "3", "4", "4", "4", "4"}[i])
+	}
+	s.Strong.Color, s.Emph.Color = color("5"), color("5")
+	s.Code.Prefix, s.Code.Suffix, s.Code.BackgroundColor, s.Code.Color = "", "", nil, color("2")
+	s.Link.Color, s.LinkText.Color = color("6"), color("6")
+	s.BlockQuote.Color = color("8")
+	s.HorizontalRule.Color, s.HorizontalRule.Format = color("8"), "\n────────\n"
+	s.Item.Color, s.Enumeration.Color = color("6"), color("6")
+	s.CodeBlock.Color = nil
+	return s
+}
+
+func newRenderer(width int) *glamour.TermRenderer {
+	style := ompStyle()
 	// ANSI colors at most, so the terminal's colorscheme applies (NO_COLOR still turns them off).
 	profile := max(lipgloss.ColorProfile(), termenv.ANSI)
 	options := []glamour.TermRendererOption{
@@ -59,12 +82,12 @@ func (c *Chat) render(markdown string) []string {
 	}
 	var lines []string
 	for _, line := range strings.Split(strings.Trim(out, "\n"), "\n") {
-		lines = append(lines, strings.Split(ansi.Hardwrap(line, c.width, true), "\n")...)
+		lines = append(lines, strings.Split(xansi.Hardwrap(line, c.width, true), "\n")...)
 	}
-	for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[0])) == "" {
+	for len(lines) > 0 && strings.TrimSpace(xansi.Strip(lines[0])) == "" {
 		lines = lines[1:] // glamour pads blocks with blank lines; the view adds its own separators
 	}
-	for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[len(lines)-1])) == "" {
+	for len(lines) > 0 && strings.TrimSpace(xansi.Strip(lines[len(lines)-1])) == "" {
 		lines = lines[:len(lines)-1]
 	}
 	c.cache[markdown] = lines
@@ -138,6 +161,7 @@ func (c *Chat) ScrollBy(delta int) { c.offset = max(0, min(c.offset+delta, c.max
 func (c *Chat) ScrollEnd()         { c.offset = c.maxOffset() }
 func (c *Chat) AtTop() bool        { return c.offset == 0 && len(c.lines) > c.height }
 func (c *Chat) Lines() []string    { return c.lines }
+func (c *Chat) Offset() int        { return c.offset }
 
 func (c *Chat) View() string {
 	end := min(c.offset+c.height, len(c.lines))

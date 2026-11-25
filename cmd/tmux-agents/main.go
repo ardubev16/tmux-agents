@@ -40,8 +40,10 @@ var (
 	dim    = lipgloss.NewStyle().Faint(true)
 	bold   = lipgloss.NewStyle().Bold(true)
 	border = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	marker = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Render("▌")
 )
+
+// Agent list sections, in list_agents' order; empty ones are not shown.
+var groups = map[string]string{"blocked": "Waiting", "done": "Idle", "working": "Running"}
 
 type agent struct {
 	pane, state, target, command, path, transcript, socket, unread, title string
@@ -64,6 +66,7 @@ type model struct {
 
 	agents   []agent
 	selected int
+	listTop  int // first visible row of the agent list
 	frame    int
 	closing  string // pane waiting for a second x to confirm closing it
 
@@ -249,9 +252,11 @@ func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
 	case tea.MouseButtonWheelDown:
 		m.scrollChat(3)
 	case tea.MouseButtonLeft:
-		if msg.Action == tea.MouseActionPress && msg.X < m.listWidth() && msg.Y/2 < len(m.agents) {
-			m.selected = msg.Y / 2
-			m.agentChanged()
+		if msg.Action == tea.MouseActionPress && msg.X < m.listWidth() {
+			if _, owners := m.listRows(); m.listTop+msg.Y < len(owners) && owners[m.listTop+msg.Y] >= 0 {
+				m.selected = owners[m.listTop+msg.Y]
+				m.agentChanged()
+			}
 		}
 	}
 	return nil
@@ -360,11 +365,12 @@ func (m *model) closeReply() {
 	m.layout()
 }
 
-func (m *model) listWidth() int { return m.width * 35 / 100 }
-func (m *model) chatWidth() int { return max(1, m.width-m.listWidth()-3) } // border and padding
+func (m *model) listWidth() int  { return m.width * 35 / 100 }
+func (m *model) rightWidth() int { return max(3, m.width-m.listWidth()-2) } // separator and a space
+func (m *model) chatWidth() int  { return m.rightWidth() - 2 }              // a space and the scrollbar
 
 func (m *model) chatHeight() int {
-	h := m.height - 2 // status and help lines
+	h := m.height - 4 // header and its rule, status and help lines
 	if m.replying {
 		h -= m.reply.Height() + 1
 	}
@@ -372,37 +378,83 @@ func (m *model) chatHeight() int {
 }
 
 func (m *model) layout() {
-	m.reply.SetWidth(m.chatWidth())
+	m.reply.SetWidth(m.rightWidth())
 	m.chat.SetSize(m.chatWidth(), m.chatHeight())
 }
 
-func (m *model) label(a agent, selected bool) string {
-	style, ok := stateStyles[a.state]
-	if !ok {
-		style.icon = " "
+func name(a agent) string {
+	if a.title != "" {
+		return a.title
 	}
-	icon, note := style.icon, ""
-	switch {
-	case a.state == "working":
-		icon = string(spinner[m.frame%len(spinner)])
-	case a.state == "blocked":
-		note = " needs input"
-	case a.unread != "":
-		icon, note = "●", " finished"
+	return a.command
+}
+
+func details(a agent) string { return fmt.Sprintf("%s · %s · %s", a.target, a.command, a.path) }
+
+// listRows renders the agent list: a header per non-empty section, two lines per agent, the selected one
+// highlighted. owners maps each row to its agent, -1 for headers.
+func (m *model) listRows() (rows []string, owners []int) {
+	width, group := m.listWidth(), ""
+	for i, a := range m.agents {
+		if g := groups[a.state]; g != group {
+			group = g
+			rows, owners = append(rows, bold.Render(ansi.Truncate(" "+g, width, "…"))), append(owners, -1)
+		}
+		base := lipgloss.NewStyle()
+		if i == m.selected {
+			base = base.Background(lipgloss.Color("8"))
+		}
+		style, ok := stateStyles[a.state]
+		if !ok {
+			style.icon = " "
+		}
+		icon, note := style.icon, ""
+		switch {
+		case a.state == "working":
+			icon = string(spinner[m.frame%len(spinner)])
+		case a.state == "blocked":
+			note = " needs input"
+		case a.unread != "":
+			icon, note = "●", " finished"
+		}
+		color := base.Foreground(style.color)
+		lines := []string{
+			base.Render(" ") + color.Render(icon) + base.Render(" ") + base.Bold(true).Render(name(a)) + color.Render(note),
+			base.Render("   ") + base.Faint(true).Render(details(a)),
+		}
+		for _, line := range lines {
+			line = ansi.Truncate(line, width, base.Render("…"))
+			rows = append(rows, line+base.Render(strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))))
+			owners = append(owners, i)
+		}
 	}
-	name := a.title
-	if name == "" {
-		name = a.command
+	return rows, owners
+}
+
+func (m *model) scrollbar() string {
+	height, lines := m.chatHeight(), len(m.chat.Lines())
+	bar := make([]string, height)
+	thumb, top := height, 0
+	if lines > height {
+		thumb = max(1, height*height/lines)
+		top = (height - thumb) * m.chat.Offset() / max(1, lines-height)
 	}
-	color := lipgloss.NewStyle().Foreground(style.color)
-	gutter := " "
-	if selected {
-		gutter = marker
+	for i := range bar {
+		if lines > height && i >= top && i < top+thumb {
+			bar[i] = border.Render("┃")
+		} else {
+			bar[i] = border.Faint(true).Render("│")
+		}
 	}
-	width := m.listWidth()
-	first := gutter + color.Render(icon) + " " + bold.Render(name) + color.Render(note)
-	second := gutter + "  " + dim.Render(fmt.Sprintf("%s · %s · %s", a.target, a.command, a.path))
-	return ansi.Truncate(first, width, "…") + "\n" + ansi.Truncate(second, width, "…")
+	return strings.Join(bar, "\n")
+}
+
+func (m *model) header() string {
+	a := m.agent()
+	if a == nil {
+		return ""
+	}
+	return ansi.Truncate(bold.Render(name(*a))+"  "+dim.Render(details(*a)), m.rightWidth(), "…")
 }
 
 func (m *model) status() string {
@@ -436,14 +488,28 @@ func (m *model) View() string {
 		return ""
 	}
 	body := m.height - 1
-	var items []string
-	for i, a := range m.agents {
-		items = append(items, m.label(a, i == m.selected))
+	rows, owners := m.listRows()
+	// Keep the selected agent (and its section header) in view when the list is taller than the popup.
+	for i, owner := range owners {
+		if owner != m.selected {
+			continue
+		}
+		first := i
+		if i > 0 && owners[i-1] < 0 {
+			first = i - 1
+		}
+		m.listTop = min(m.listTop, first)
+		m.listTop = max(m.listTop, i+2-body)
+		break
 	}
-	list := lipgloss.NewStyle().Width(m.listWidth()).Height(body).MaxHeight(body).Render(strings.Join(items, "\n"))
-	right := []string{m.chat.View(), " " + m.status()}
+	m.listTop = max(0, min(m.listTop, len(rows)-body))
+	rows = rows[min(m.listTop, len(rows)):]
+	list := lipgloss.NewStyle().Width(m.listWidth()).Height(body).MaxHeight(body).Render(strings.Join(rows, "\n"))
+	chatView := lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Width(m.chatWidth()).Render(m.chat.View()), " ", m.scrollbar())
+	right := []string{m.header(), border.Render(strings.Repeat("─", m.rightWidth())), chatView, m.status()}
 	if m.replying {
-		right = append(right, border.Render(strings.Repeat("─", m.chatWidth())), m.reply.View())
+		right = append(right, border.Render(strings.Repeat("─", m.rightWidth())), m.reply.View())
 	}
 	sep := border.Render(strings.Repeat("│\n", body-1) + "│")
 	main := lipgloss.JoinHorizontal(lipgloss.Top, list, sep, " ", strings.Join(right, "\n"))
@@ -454,17 +520,24 @@ func (m *model) View() string {
 	return main + "\n" + dim.Render(ansi.Truncate(help, m.width, "…"))
 }
 
-func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "Usage: tmux-agents <path to main.sh>")
-		os.Exit(1)
-	}
+func newDashboard(mainSh string) *model {
 	reply := textarea.New()
 	reply.ShowLineNumbers = false
 	reply.Prompt = ""
 	reply.SetHeight(4)
 	reply.Placeholder = "reply (empty = just Enter)"
-	m := &model{mainSh: os.Args[1], transcripts: map[string]*transcript.Transcript{}, wanted: chatBlocks, reply: reply}
+	// Ctrl+arrows jump by word too, like in shells and editors (the defaults only bind Alt).
+	reply.KeyMap.WordBackward.SetKeys("alt+left", "alt+b", "ctrl+left")
+	reply.KeyMap.WordForward.SetKeys("alt+right", "alt+f", "ctrl+right")
+	return &model{mainSh: mainSh, transcripts: map[string]*transcript.Transcript{}, wanted: chatBlocks, reply: reply}
+}
+
+func main() {
+	if len(os.Args) != 2 {
+		fmt.Fprintln(os.Stderr, "Usage: tmux-agents <path to main.sh>")
+		os.Exit(1)
+	}
+	m := newDashboard(os.Args[1])
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	m.send = p.Send
 	if _, err := p.Run(); err != nil {
