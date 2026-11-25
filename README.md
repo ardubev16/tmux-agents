@@ -55,7 +55,7 @@ visible unless `allow-passthrough` is `all`; the plugin's notification covers th
 
 | Key          | Action                                                                                                                       |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `prefix + a` | Agent dashboard popup: agents on the left, the highlighted agent's chat on the right, both updating live. `Enter` switch to it, `Ctrl-r` reply, `PgUp`/`PgDn` scroll the chat, `x` twice close the agent, `q`/`Esc` close |
+| `prefix + O` | Agent dashboard ("overview") popup: agents on the left, the highlighted agent's chat on the right, both updating live. `Enter` switch to it, `Ctrl-r` reply, `PgUp`/`PgDn` scroll the chat (scrolling to the top loads older messages), `x` twice close the agent, `q`/`Esc` close |
 | `prefix + W` | Pick a branch (fzf), create or reuse its worktree, and switch to a tmux session rooted there (reuses any session already there) |
 
 Agents are listed by the session name their harness gave them. Agents that need input (**needs input**) come
@@ -125,7 +125,7 @@ set -g @tmux_agents_worktree_dir ''
 set -g @tmux_agents_worktree_command ''
 
 # Keys
-set -g @tmux_agents_key_dashboard 'a'
+set -g @tmux_agents_key_dashboard 'O'
 set -g @tmux_agents_key_worktree 'W'
 
 # Print verbose error details

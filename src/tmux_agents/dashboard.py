@@ -21,11 +21,12 @@ from textual.widgets.option_list import Option
 
 from tmux_agents import agent_socket
 from tmux_agents.chat import ChatLog
-from tmux_agents.transcript import title, to_blocks
+from tmux_agents.transcript import Transcript, title
 
 # Same glyphs and default colors as the status bar counters; working agents spin instead.
 STATE_STYLES = {"done": ("○", "green"), "working": ("⦿", "yellow"), "blocked": ("●", "red")}
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+CHAT_BLOCKS = 40  # newest blocks rendered when opening an agent's chat, and added per scroll to the top
 SOCKET_ERRORS = (OSError, TimeoutError, ValueError)
 
 
@@ -50,7 +51,8 @@ class Dashboard(App):
     CSS = """
     #agents { width: 35%; height: 1fr; border: none; border-right: solid $panel; padding: 0; }
     #right { width: 1fr; }
-    #chat { height: 1fr; padding: 0 1; scrollbar-size-vertical: 1; }
+    /* Stable gutter: a scrollbar appearing would change the width and re-render every block. */
+    #chat { height: 1fr; padding: 0 1; scrollbar-size-vertical: 1; scrollbar-gutter: stable; }
     #status { height: 1; padding: 0 1; }
     #reply { display: none; height: auto; max-height: 12; border: tall $accent; }
     """
@@ -79,6 +81,8 @@ class Dashboard(App):
         self.agents: dict[str, Agent] = {}
         self.frame = 0
         self.shown: tuple | None = None  # what the chat currently shows, to skip identical re-renders
+        self.transcripts: dict[str, Transcript] = {}  # by path, so polls only parse appended lines
+        self.wanted = CHAT_BLOCKS  # how many of the newest blocks the chat shows; grows on scrolling up
         self.live: dict = {}  # latest live-state snapshot from the highlighted agent's socket
         self.closing: str | None = None  # pane waiting for a second x to confirm closing it
 
@@ -173,14 +177,24 @@ class Dashboard(App):
         # omp creates the session file with the first message; until then the chat is just the live reply.
         transcript = agent.transcript if agent else ""
         stat = os.stat(transcript) if transcript and os.path.isfile(transcript) else None
-        key = (agent.pane, stat and (stat.st_mtime_ns, stat.st_size)) if agent else None
+        key = (agent.pane, stat and (stat.st_mtime_ns, stat.st_size), self.wanted) if agent else None
         if key == self.shown and not force:
             return
         pane_changed = not (self.shown and key and self.shown[0] == key[0])
+        if pane_changed:
+            self.wanted = CHAT_BLOCKS
+            key = key and (*key[:2], CHAT_BLOCKS)
         self.shown = key
-        chat.update(blocks=to_blocks(transcript) if transcript else [], live=self._live_markdown())
+        blocks, more = [], False
+        if transcript:
+            blocks, more = self.transcripts.setdefault(transcript, Transcript(transcript)).blocks(self.wanted)
+        chat.update(blocks=blocks, live=self._live_markdown(), more=more)
         if pane_changed:
             chat.scroll_end(animate=False)
+
+    def on_chat_log_need_more(self) -> None:
+        self.wanted += CHAT_BLOCKS
+        self._poll_chat()
 
     def _live_markdown(self) -> str:
         """The in-progress reply, then prompts the agent has queued but not received yet."""

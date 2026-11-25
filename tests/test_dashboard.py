@@ -5,13 +5,19 @@ from pathlib import Path
 
 from textual.widgets import Static, TextArea
 
+from tmux_agents import transcript as transcript_module
 from tmux_agents.chat import ChatLog
 from tmux_agents.dashboard import Dashboard
-from tmux_agents.transcript import to_blocks
+from tmux_agents.transcript import Transcript
+
+
+def to_blocks(path: str) -> list[str]:
+    return Transcript(path).blocks(10**6)[0]
 
 
 def write_jsonl(path: Path, entries: list[dict]) -> str:
-    path.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+    # Compact, like both harnesses write it.
+    path.write_text("\n".join(json.dumps(e, separators=(",", ":")) for e in entries) + "\n")
     return str(path)
 
 
@@ -142,7 +148,7 @@ async def test_chat_wraps_to_the_view(tmp_path):
         await pilot.pause()
         chat = app.query_one(ChatLog)
         lines = chat_text(app)
-        assert "answer 0" in lines[0] and any("answer 99" in line for line in lines)
+        assert lines[0].startswith("answer ") and any("answer 99" in line for line in lines)
         # The 300-column code line wraps instead of being cut.
         assert sum(line.count("x") for line in lines) == 300
         assert all(len(line) <= chat.scrollable_content_region.width for line in lines)
@@ -265,3 +271,40 @@ async def test_close_needs_confirmation(tmp_path):
         assert "close_agent %3" in log.read_text().splitlines()
         await pilot.pause(1.2)  # the next list refresh drops it
         assert app.query_one("#agents").option_count == 2
+
+
+def test_transcript_reads_from_the_end_and_follows_appends(tmp_path, monkeypatch):
+    monkeypatch.setattr(transcript_module, "CHUNK", 64)  # force many backward steps and lines longer than a chunk
+    entries = [omp_message("0", None, "user", text("root"))]
+    entries += [
+        omp_message(str(i), str(i - 1), "assistant", text(f"answer {i} " + "x" * (i % 3) * 50)) for i in range(1, 30)
+    ]
+    entries.append(omp_message("rewound", "2", "assistant", text("after rewind")))  # branches off far back
+    path = tmp_path / "s.jsonl"
+    write_jsonl(path, entries)
+    reader = Transcript(str(path))
+    blocks, more = reader.blocks(2)
+    assert [b[:8] for b in blocks] == ["answer 2", "after re"] and more
+    assert reader.start > 0  # the head of the file was never parsed
+    assert reader.blocks(100) == (["> root", "answer 1 " + "x" * 50, "answer 2 " + "x" * 100, "after rewind"], False)
+
+    with path.open("a") as file:
+        file.write(json.dumps(omp_message("new", "rewound", "assistant", text("appended"))) + "\n")
+        file.write('{"type": "message", "id": "half')  # still being written
+    assert reader.blocks(2) == (["after rewind", "appended"], True)
+
+
+async def test_scrolling_to_the_top_loads_older_blocks_in_place(tmp_path):
+    main_sh, _ = fake_main(tmp_path)
+    app = Dashboard(main_sh)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.press("down")
+        await pilot.pause()
+        chat = app.query_one(ChatLog)
+        assert len(chat.blocks) < 101 and chat.more
+        oldest = chat.blocks[0]
+        chat.scroll_to(y=0, animate=False, immediate=True)
+        await pilot.pause()
+        assert len(chat.blocks) > 40 and chat.blocks[-40:][0] == oldest
+        top = chat_text(app)[int(chat.scroll_y)]
+        assert oldest.split()[0] in top  # still looking at the block that was on top before

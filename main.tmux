@@ -24,7 +24,7 @@ function tmux_option() {
 
 function init_tmux_agents() {
     local -r \
-        key_dashboard=$(tmux_option "$key_dashboard_config" "a") \
+        key_dashboard=$(tmux_option "$key_dashboard_config" "O") \
         key_worktree=$(tmux_option "$key_worktree_config" "W") \
         debug=$(tmux_option "$debug_config" "off")
 

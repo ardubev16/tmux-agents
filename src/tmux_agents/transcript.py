@@ -1,26 +1,18 @@
-"""Turn an agent's JSONL session file (omp/pi or Claude Code) into Markdown blocks for the dashboard."""
+"""Turn an agent's JSONL session file (omp/pi or Claude Code) into Markdown blocks for the dashboard.
+
+Session files reach tens of MB, so `Transcript` reads from the end: only the newest part of the active
+branch is parsed, older parts on demand, and each poll parses just the appended lines.
+"""
 
 import functools
 import json
 import os
-from pathlib import Path
+
+CHUNK = 1 << 18  # bytes read per step when walking back through the file
 
 # Tool-call argument shown next to the tool name, first match wins (omp's "i" is its intent line).
 SUMMARY_KEYS = ("i", "description", "command", "file_path", "path", "pattern", "query", "url")
 TOOL_PREFIX = "- `"
-
-
-def _active_branch(entries: list[dict]) -> list[dict]:
-    """Both formats are trees (rewinds/forks branch off): walk back from the last entry to the root."""
-    by_id = {e.get("id") or e.get("uuid"): e for e in entries}
-    by_id.pop(None, None)
-    leaf = next((e for e in reversed(entries) if (e.get("id") or e.get("uuid")) in by_id), None)
-    branch, seen = [], set()
-    while leaf is not None and id(leaf) not in seen:
-        seen.add(id(leaf))
-        branch.append(leaf)
-        leaf = by_id.get(leaf.get("parentId") or leaf.get("parentUuid"))
-    return branch[::-1]
 
 
 def _tool_line(name: str, args: object) -> str:
@@ -57,23 +49,103 @@ def _blocks(entry: dict) -> list[str]:
     return blocks
 
 
-def to_blocks(path: str) -> list[str]:
-    """Markdown blocks of the conversation, oldest first; consecutive tool calls share one block."""
+def _parse(data: bytes) -> list[tuple[str, dict]]:
+    """(id, entry) per line; omp uses `id`, Claude Code `uuid`. Lines without one are not part of the tree."""
     entries = []
-    if not Path(path).is_file():
-        return []
-    for line in Path(path).read_text(errors="replace").splitlines():
+    for line in data.split(b"\n"):
         try:
-            entries.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue  # a line still being written
-    out: list[str] = []
-    for block in (b for e in _active_branch(entries) for b in _blocks(e)):
-        if out and block.startswith(TOOL_PREFIX) and out[-1].startswith(TOOL_PREFIX):
-            out[-1] += "\n" + block
-        else:
-            out.append(block)
-    return out
+            entry = json.loads(line)
+        except ValueError:
+            continue  # blank
+        key = entry.get("id") or entry.get("uuid") if isinstance(entry, dict) else None
+        if key:
+            entries.append((key, entry))
+    return entries
+
+
+class Transcript:
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.entries: dict[str, dict] = {}
+        self.leaf: str | None = None  # last entry in the file: the tip of the active branch
+        self.start = self.end = -1  # parsed byte range; both on line boundaries, -1 = nothing read yet
+
+    def _older(self, file) -> bool:
+        """Parses the lines before self.start; False when the whole file is already parsed."""
+        if self.start <= 0:
+            return False
+        low = self.start
+        while True:
+            low = max(0, low - CHUNK)
+            file.seek(low)
+            chunk = file.read(self.start - low)
+            cut = 0 if low == 0 else chunk.find(b"\n") + 1  # first full line in the chunk
+            if low == 0 or 0 < cut < len(chunk):
+                break  # otherwise one line is longer than the chunk: read further back
+        entries = _parse(chunk[cut:])
+        for key, entry in entries:
+            self.entries.setdefault(key, entry)
+        if self.leaf is None and entries:
+            self.leaf = entries[-1][0]
+        self.start = low + cut
+        return True
+
+    def _refresh(self, file) -> None:
+        size = os.fstat(file.fileno()).st_size
+        if size < self.end:  # rewritten from scratch
+            self.__init__(self.path)
+        if self.end < 0:
+            # Start at the end of the last complete line; the one after it may still be being written.
+            end = size
+            while end > 0:
+                low = max(0, end - CHUNK)
+                file.seek(low)
+                newline = file.read(end - low).rfind(b"\n")
+                if newline >= 0:
+                    end = low + newline + 1
+                    break
+                end = low
+            self.start = self.end = end
+            return
+        file.seek(self.end)
+        data = file.read(size - self.end)
+        data = data[: data.rfind(b"\n") + 1]  # the last line may still be being written
+        for key, entry in _parse(data):
+            self.entries[key] = entry
+            self.leaf = key
+        self.end += len(data)
+
+    def blocks(self, wanted: int) -> tuple[list[str], bool]:
+        """At least `wanted` newest Markdown blocks of the active branch, oldest first (consecutive tool
+        calls share one), and whether older ones exist."""
+        chain: list[list[str]] = []
+        count, key, seen = 0, None, set()
+        try:
+            with open(self.path, "rb") as file:
+                self._refresh(file)
+                while self.leaf is None and self._older(file):
+                    pass
+                # Both formats are trees (rewinds/forks branch off): walk back from the leaf.
+                key = self.leaf
+                while key and key not in seen and count < wanted:
+                    entry = self.entries.get(key)
+                    if entry is None:
+                        if self._older(file):
+                            continue
+                        break  # parent not in the file (e.g. compacted away): that is the root
+                    seen.add(key)
+                    chain.append(_blocks(entry))
+                    count += len(chain[-1])
+                    key = entry.get("parentId") or entry.get("parentUuid")
+        except OSError:
+            return [], False
+        out: list[str] = []
+        for block in (b for blocks in reversed(chain) for b in blocks):
+            if out and block.startswith(TOOL_PREFIX) and out[-1].startswith(TOOL_PREFIX):
+                out[-1] += "\n" + block
+            else:
+                out.append(block)
+        return out, bool(key and key not in seen and (key in self.entries or self.start > 0))
 
 
 def title(path: str) -> str:
@@ -86,18 +158,23 @@ def title(path: str) -> str:
 
 
 @functools.lru_cache(maxsize=64)
-def _title(path: str, _mtime_ns: int, _size: int) -> str:
-    found = ""
-    with open(path, errors="replace") as file:
-        for line in file:
-            if '"title"' not in line and '"ai-title"' not in line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue  # a line still being written
-            if entry.get("type") == "title":
-                return entry.get("title", "")  # omp: the first line, rewritten in place on renames
-            if entry.get("type") == "ai-title":
-                found = entry.get("aiTitle", found)
-    return found
+def _title(path: str, _mtime_ns: int, size: int) -> str:
+    with open(path, "rb") as file:
+        first = file.readline()
+        if first.startswith(b'{"type":"title"'):
+            return json.loads(first).get("title", "")  # omp: rewritten in place on renames
+        # Claude Code: the newest ai-title line, searched from the end.
+        end = size
+        while end > 0:
+            low = max(0, end - CHUNK)
+            file.seek(low)
+            chunk = file.read(end - low + 4096)  # overlap so a line across the boundary is found whole
+            at = chunk.rfind(b'"type":"ai-title"')
+            if at >= 0:
+                line = chunk[chunk.rfind(b"\n", 0, at) + 1 :].split(b"\n", 1)[0]
+                try:
+                    return json.loads(line).get("aiTitle", "")
+                except ValueError:
+                    return ""
+            end = low
+    return ""
