@@ -8,7 +8,7 @@ set -euo pipefail
 MAIN="$(realpath "${BASH_SOURCE[0]}")"
 declare -r MAIN
 # The release this checkout belongs to; release-please bumps it, and the dashboard binary is downloaded for it.
-declare -r version="0.0.0" # x-release-please-version
+declare -r version="0.1.0" # x-release-please-version
 declare -r state_option='@tmux_agents_state'
 declare -r transcript_option='@tmux_agents_transcript'
 declare -r socket_option='@tmux_agents_socket'
