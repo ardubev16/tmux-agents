@@ -206,6 +206,34 @@ func TestReplyToAnUnreachableAgentIsKeptNotTypedIntoThePane(t *testing.T) {
 	}
 }
 
+func TestPeriodicRefreshRunsOutsideUpdate(t *testing.T) {
+	m, _, calls := newModel(t, "")
+	before := len(calls())
+	var cmd tea.Cmd
+	for range fps {
+		_, cmd = m.Update(tickMsg{})
+	}
+	if len(calls()) != before || !m.loading {
+		t.Fatalf("list_agents ran inside Update: %q", calls()[before:])
+	}
+	// Run what Update handed back, as Bubble Tea would, and deliver the agent list.
+	var pending []tea.Cmd
+	for pending = append(pending, cmd); len(pending) > 0; pending = pending[1:] {
+		if pending[0] == nil {
+			continue
+		}
+		switch msg := pending[0]().(type) {
+		case tea.BatchMsg:
+			pending = append(pending, msg...)
+		case agentsMsg:
+			m.Update(msg)
+		}
+	}
+	if m.loading || len(calls()) != before+1 || len(m.agents) != 3 {
+		t.Errorf("loading=%v agents=%d calls %q", m.loading, len(m.agents), calls()[before:])
+	}
+}
+
 func TestBlockedAgentReplyTypesIntoThePane(t *testing.T) {
 	m, _, calls := newModel(t, "")
 	press(m, "ctrl+r", "y", "e", "s", "enter")

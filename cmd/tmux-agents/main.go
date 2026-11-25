@@ -58,9 +58,11 @@ type agent struct {
 func (a agent) sharesDraft() bool { return a.socket != "" && a.state != "blocked" }
 
 type (
-	tickMsg struct{}
-	termMsg struct{} // lazygit's screen changed or it exited
-	liveMsg struct {
+	tickMsg    struct{}
+	termMsg    struct{} // lazygit's screen changed or it exited
+	agentsMsg  []agent  // list_agents, read in the background
+	changesMsg struct{ dir, text string }
+	liveMsg    struct {
 		gen  int
 		live *agentsocket.Live // nil: the subscription ended
 	}
@@ -78,6 +80,10 @@ type model struct {
 	closing  string // pane waiting for a second x to confirm closing it
 	changes  string // the highlighted agent's uncommitted changes, e.g. "3 files +40 −12"
 	notice   string // an error to show until the next key
+
+	// The per-second agent list and the git summary run in the background, so keys never wait for them.
+	loading    bool   // an agentsMsg is on its way
+	changesDir string // folder whose git summary to fetch once the current update is done
 
 	filtering bool
 	filter    textinput.Model
@@ -99,10 +105,12 @@ type model struct {
 	width, height int
 }
 
-func (m *model) main(args ...string) string {
-	out, _ := exec.Command(m.mainSh, args...).Output()
+func run(mainSh string, args ...string) string {
+	out, _ := exec.Command(mainSh, args...).Output()
 	return string(out)
 }
+
+func (m *model) main(args ...string) string { return run(m.mainSh, args...) }
 
 func (m *model) agent() *agent {
 	if m.selected < len(m.agents) {
@@ -117,12 +125,13 @@ func tick() tea.Cmd {
 
 func (m *model) Init() tea.Cmd {
 	m.reload()
-	return tick()
+	return tea.Batch(tick(), m.fetchChanges())
 }
 
-func (m *model) reload() {
-	m.all = nil
-	for _, line := range strings.Split(strings.TrimRight(m.main("list_agents"), "\n"), "\n") {
+// loadAgents reads list_agents and each agent's session name; safe to run in the background.
+func loadAgents(mainSh string) []agent {
+	var agents []agent
+	for _, line := range strings.Split(strings.TrimRight(run(mainSh, "list_agents"), "\n"), "\n") {
 		if line == "" {
 			continue
 		}
@@ -132,12 +141,32 @@ func (m *model) reload() {
 		if a.transcript != "" {
 			a.title = transcript.Title(a.transcript)
 		}
-		m.all = append(m.all, a)
+		agents = append(agents, a)
 	}
+	return agents
+}
+
+// reload reads the agent list right away, after something the user did changed it.
+func (m *model) reload() {
+	m.all = loadAgents(m.mainSh)
 	m.applyFilter()
+	m.wantChanges()
+}
+
+// wantChanges asks for the highlighted agent's git summary, fetched in the background after this update.
+func (m *model) wantChanges() {
 	if a := m.agent(); a != nil {
-		m.changes = changes(a.path)
+		m.changesDir = a.path
 	}
+}
+
+func (m *model) fetchChanges() tea.Cmd {
+	dir := m.changesDir
+	m.changesDir = ""
+	if dir == "" {
+		return nil
+	}
+	return func() tea.Msg { return changesMsg{dir, changes(dir)} }
 }
 
 // applyFilter lists the agents matching the filter, keeping the highlighted one when it still matches.
@@ -222,9 +251,7 @@ func (m *model) agentChanged() {
 		m.closing = ""
 	}
 	m.changes = ""
-	if a != nil {
-		m.changes = changes(a.path)
-	}
+	m.wantChanges()
 	if m.stop != nil {
 		close(m.stop)
 		m.stop = nil
@@ -291,28 +318,45 @@ func (m *model) scrollChat(delta int) {
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	return m, tea.Batch(m.update(msg), m.fetchChanges())
+}
+
+func (m *model) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.layout()
 	case tickMsg:
 		m.frame++
-		// Not while replying or in lazygit: a reload could move the selection to another agent, which the reply
-		// would then go to.
-		if m.frame%fps == 0 && !m.replying && m.lazygit == nil {
-			m.reload()
-		}
 		if m.frame%3 == 0 {
 			m.pollChat(false)
 		}
-		return m, tick()
+		// Not while replying or in lazygit: a reload could move the selection to another agent, which the reply
+		// would then go to.
+		if m.frame%fps == 0 && !m.replying && m.lazygit == nil && !m.loading {
+			m.loading = true
+			mainSh := m.mainSh
+			return tea.Batch(tick(), func() tea.Msg { return agentsMsg(loadAgents(mainSh)) })
+		}
+		return tick()
+	case agentsMsg:
+		m.loading = false
+		if !m.replying && m.lazygit == nil { // either may have started while the list was loading
+			m.all = msg
+			m.applyFilter()
+			m.wantChanges()
+		}
+	case changesMsg:
+		if a := m.agent(); a != nil && a.path == msg.dir {
+			m.changes = msg.text
+		}
 	case liveMsg:
 		if msg.gen != m.liveGen {
-			return m, nil // from an agent no longer highlighted
+			return nil // from an agent no longer highlighted
 		}
 		if msg.live == nil {
 			m.live = agentsocket.Live{}
-			return m, nil
+			return nil
 		}
 		finished := m.live.Streaming && !msg.live.Streaming
 		m.live = *msg.live
@@ -328,21 +372,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reload()
 		}
 	case tea.MouseMsg:
-		return m, m.mouse(msg)
+		return m.mouse(msg)
 	case tea.KeyMsg:
 		m.notice = ""
 		switch {
 		case m.lazygit != nil:
 			m.lazygit.Key(msg)
-			return m, nil
+			return nil
 		case m.replying:
-			return m, m.replyKey(msg)
+			return m.replyKey(msg)
 		case m.filtering:
-			return m, m.filterKey(msg)
+			return m.filterKey(msg)
 		}
-		return m, m.key(msg)
+		return m.key(msg)
 	}
-	return m, nil
+	return nil
 }
 
 func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
