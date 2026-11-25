@@ -26,7 +26,8 @@ export default function (pi: Pi): void {
   const main = mainSh();
   if (!main) return;
   const global = globalThis as { tmuxAgents?: Shared };
-  const shared = (global.tmuxAgents ??= serve());
+  global.tmuxAgents ??= serve();
+  const shared = global.tmuxAgents;
 
   // Sync keeps transitions ordered and survives the process exiting right after session_shutdown; tmux calls take ms.
   const run = (...args: string[]) => {
@@ -75,7 +76,10 @@ export default function (pi: Pi): void {
   on("message_update", (event) => {
     if (event.message?.role !== "assistant") return;
     const blocks = event.message.content ?? [];
-    const text = blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n\n");
+    const text = blocks
+      .filter((b) => b.type === "text")
+      .map((b) => b.text ?? "")
+      .join("\n\n");
     push({ text, thinking: blocks.at(-1)?.type === "thinking", streaming: true });
   });
   on("message_end", (event) => {
@@ -151,7 +155,10 @@ function serve(): Shared {
 // the plugin loaded or after it moved.
 function mainSh(): string | undefined {
   try {
-    const out = execFileSync("tmux", ["show-environment", "-g", "TMUX_AGENTS"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = execFileSync("tmux", ["show-environment", "-g", "TMUX_AGENTS"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
     return /^TMUX_AGENTS=(.+)$/m.exec(out)?.[1];
   } catch {
     return undefined;

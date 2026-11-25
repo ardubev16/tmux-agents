@@ -55,3 +55,16 @@ repos:
     rev: d4df4cec471ce155946474590d7b95920f623ccb  # frozen: v0.24.2
     hooks:
       - id: markdownlint-cli2
+
+  - repo: https://github.com/biomejs/pre-commit
+    rev: 53e7cebd064fffb1ad6fe11d5309e5348017ae32  # frozen: v2.6.9
+    hooks:
+      - id: biome-check
+        types_or: [ts] # integrations/omp.ts; JSON and Markdown have their own checks
+        additional_dependencies: ["@biomejs/biome@2.6.9"]
+
+  - repo: https://github.com/renovatebot/pre-commit-hooks
+    rev: 3824a44a60d51c3361c8b477a7e5b922115b9c92  # frozen: 44.263.1
+    hooks:
+      - id: renovate-config-validator
+        args: [--strict]
