@@ -69,8 +69,8 @@ stays visible while the agent's pane shows something else, e.g. `$EDITOR` on a l
 hooks report a session (the bundled omp and Claude Code integrations) show a chat. Questions an agent asks you (omp's
 `ask`, Claude Code's `AskUserQuestion`) show in the chat as the question and its choices, without the answers the
 agent prefilled. The header shows the agent folder's uncommitted changes (e.g. `3 files +40 −12`, tracked files
-only) and commits its upstream lacks (`2 unpushed`). `Tab` runs [lazygit](https://github.com/jesseduffield/lazygit)
-there, in place of the chat with the agent list still beside it; every key goes to lazygit until you quit it.
+only) and commits its upstream lacks (`⇡2`). `Tab` runs [lazygit](https://github.com/jesseduffield/lazygit)
+there, in place of the chat with the agent list still beside it; every key and click goes to lazygit until you quit it.
 
 The dashboard uses your terminal's colorscheme. omp agents also stream their in-progress reply, current activity
 (thinking, running a tool) and prompts queued while they work (shown as *queued* until delivered) into the

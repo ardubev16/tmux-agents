@@ -239,7 +239,7 @@ func TestChangesSummarizesTheDiff(t *testing.T) {
 	git("branch", "base")
 	git("branch", "--set-upstream-to=base")
 	git("commit", "-qam", "ahead")
-	if got := changes(dir); got != "1 unpushed" {
+	if got := changes(dir); got != "⇡1" {
 		t.Errorf("got %q", got)
 	}
 }

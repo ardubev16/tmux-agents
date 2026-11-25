@@ -135,3 +135,38 @@ func (t *Term) Key(msg tea.KeyMsg) {
 		t.emu.SendKey(uv.KeyPressEvent{Code: 'a' + rune(msg.Type-tea.KeyCtrlA), Mod: mod | uv.ModCtrl})
 	}
 }
+
+var buttons = map[tea.MouseButton]uv.MouseButton{
+	tea.MouseButtonLeft:       uv.MouseLeft,
+	tea.MouseButtonMiddle:     uv.MouseMiddle,
+	tea.MouseButtonRight:      uv.MouseRight,
+	tea.MouseButtonWheelUp:    uv.MouseWheelUp,
+	tea.MouseButtonWheelDown:  uv.MouseWheelDown,
+	tea.MouseButtonWheelLeft:  uv.MouseWheelLeft,
+	tea.MouseButtonWheelRight: uv.MouseWheelRight,
+}
+
+// Mouse forwards a mouse event at (x, y), counted from the terminal's top-left corner. The emulator encodes
+// it the way the program asked for, and drops it if the program did not turn mouse reporting on.
+func (t *Term) Mouse(msg tea.MouseMsg, x, y int) {
+	m := uv.Mouse{X: x, Y: y, Button: buttons[msg.Button]}
+	if msg.Alt {
+		m.Mod |= uv.ModAlt
+	}
+	if msg.Ctrl {
+		m.Mod |= uv.ModCtrl
+	}
+	if msg.Shift {
+		m.Mod |= uv.ModShift
+	}
+	switch {
+	case tea.MouseEvent(msg).IsWheel():
+		t.emu.SendMouse(uv.MouseWheelEvent(m))
+	case msg.Action == tea.MouseActionPress:
+		t.emu.SendMouse(uv.MouseClickEvent(m))
+	case msg.Action == tea.MouseActionRelease:
+		t.emu.SendMouse(uv.MouseReleaseEvent(m))
+	default:
+		t.emu.SendMouse(uv.MouseMotionEvent(m))
+	}
+}

@@ -179,7 +179,7 @@ func fuzzy(s, query string) bool {
 }
 
 // changes sums up dir's uncommitted changes to tracked files and the commits its upstream lacks, e.g.
-// "3 files +40 −12 · 2 unpushed"; "" when there are neither or dir is not in a git repo.
+// "3 files +40 −12 · ⇡2"; "" when there are neither or dir is not in a git repo.
 func changes(dir string) string {
 	git := func(args ...string) (string, error) {
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
@@ -211,7 +211,7 @@ func changes(dir string) string {
 	}
 	// A branch without an upstream has nothing to compare with.
 	if n, err := git("rev-list", "--count", "@{upstream}..HEAD"); err == nil && n != "0" {
-		parts = append(parts, n+" unpushed")
+		parts = append(parts, "⇡"+n)
 	}
 	return strings.Join(parts, " · ")
 }
@@ -347,6 +347,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
 	if m.lazygit != nil {
+		// lazygit sits right of the list, separator and a space, below the header and its rule.
+		x, y := msg.X-m.listWidth()-2, msg.Y-2
+		if x >= 0 && y >= 0 && x < m.rightWidth() && y < m.chatHeight() {
+			m.lazygit.Mouse(msg, x, y)
+		}
 		return nil
 	}
 	switch msg.Button {
