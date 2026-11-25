@@ -274,7 +274,7 @@ class Dashboard(App):
             await self.action_reload()
         elif agent is not None:
             self._main("switch_agent", agent.pane)
-            self.exit()
+            self._quit()
 
     def action_scroll_chat(self, direction: int) -> None:
         chat = self.query_one(ChatLog)
@@ -307,4 +307,18 @@ class Dashboard(App):
                 await self._set_draft(agent, reply.text)  # keep the edits as the agent's draft
             self._close_reply()
         else:
+            self._quit()
+
+    def _quit(self) -> None:
+        """Exits at once. Textual's shutdown joins its input thread, which polls stdin every 0.1 s and so
+        delays closing by ~0.2 s; restoring the terminal and ending the process makes that thread moot."""
+        if self.is_headless:  # tests: keep the normal exit so run_test returns
             self.exit()
+            return
+        from textual.drivers.linux_driver import LinuxDriver  # private Textual API, used on Linux and macOS
+
+        driver = self._driver
+        if isinstance(driver, LinuxDriver):
+            driver._key_thread = None  # skip the join in stop_application_mode; the terminal is still restored
+            driver.stop_application_mode()
+        os._exit(0)
