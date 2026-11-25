@@ -2,7 +2,8 @@
 # integrations/install.sh against a throwaway $HOME. Run: bats tests/test_install.bats
 
 setup() {
-    INSTALL="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/../integrations/install.sh"
+    INTEGRATIONS="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/../integrations"
+    INSTALL="$INTEGRATIONS/install.sh"
     export HOME="$BATS_TEST_TMPDIR/home"
     mkdir -p "$HOME/.omp/agent" "$HOME/.claude"
     # A user hook on an event we also use, plus an unrelated setting.
@@ -15,7 +16,8 @@ EOF
     "$INSTALL" install
     "$INSTALL" install
     run jq -c '[.model, (.hooks.Stop | map(.hooks[0].command)), (.hooks.UserPromptSubmit | length)]' "$HOME/.claude/settings.json"
-    [ "$output" = '["sonnet",["mine.sh","[ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state done"],1]' ]
+    ours=$(jq -c '.hooks.Stop[0].hooks[0].command' "$INTEGRATIONS/claude-hooks.json")
+    [ "$output" = "[\"sonnet\",[\"mine.sh\",$ours],1]" ]
     [ -L "$HOME/.omp/agent/extensions/tmux-agents.ts" ]
 }
 
@@ -37,4 +39,21 @@ EOF
     [[ "$output" == *"is a symlink"* ]]
     run jq -c '.hooks | keys' "$HOME/real.json"
     [ "$output" = '["Stop"]' ]
+}
+
+@test "claude hook finds TMUX_AGENTS through tmux when the pane predates the plugin" {
+    command=$(jq -r '.hooks.Stop[0].hooks[0].command' "$INTEGRATIONS/claude-hooks.json")
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    printf '#!/bin/sh\necho "$@" >"%s/called"\n' "$BATS_TEST_TMPDIR" >"$BATS_TEST_TMPDIR/main.sh"
+    printf '#!/bin/sh\necho "TMUX_AGENTS=%s/main.sh"\n' "$BATS_TEST_TMPDIR" >"$BATS_TEST_TMPDIR/bin/tmux"
+    chmod +x "$BATS_TEST_TMPDIR/main.sh" "$BATS_TEST_TMPDIR/bin/tmux"
+
+    run env -u TMUX_AGENTS TMUX_PANE=%1 PATH="$BATS_TEST_TMPDIR/bin:$PATH" sh -c "$command"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/called")" = "state done" ]
+
+    # Outside tmux the hook is a silent no-op.
+    run env -u TMUX_AGENTS -u TMUX_PANE sh -c "$command"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
 }

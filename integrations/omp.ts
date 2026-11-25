@@ -5,8 +5,9 @@ type ToolEvent = { toolName?: string };
 type Pi = { on(event: string, handler: (event: ToolEvent) => void): void };
 
 export default function (pi: Pi): void {
-  const main = process.env.TMUX_AGENTS;
-  if (!main || !process.env.TMUX_PANE) return;
+  if (!process.env.TMUX_PANE) return;
+  const main = process.env.TMUX_AGENTS || fromTmux();
+  if (!main) return;
 
   // Sync keeps transitions ordered and survives the process exiting right after session_shutdown; tmux calls take ms.
   const set = (state: string) => {
@@ -23,4 +24,14 @@ export default function (pi: Pi): void {
   pi.on("tool_execution_start", (event) => event.toolName === "ask" && set("blocked"));
   pi.on("tool_execution_end", (event) => event.toolName === "ask" && set("working"));
   pi.on("session_shutdown", () => set("clear"));
+}
+
+// Panes opened before the plugin loaded lack TMUX_AGENTS; the server's global environment has it.
+function fromTmux(): string | undefined {
+  try {
+    const out = execFileSync("tmux", ["show-environment", "-g", "TMUX_AGENTS"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return /^TMUX_AGENTS=(.+)$/m.exec(out)?.[1];
+  } catch {
+    return undefined;
+  }
 }

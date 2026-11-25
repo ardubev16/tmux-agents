@@ -1,9 +1,9 @@
 {
   "hooks": {
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state working" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state working" }] }],
-    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state blocked" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state done" }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state clear" }] }]
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state working; }" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state working; }" }] }],
+    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state blocked; }" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state done; }" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state clear; }" }] }]
   }
 }

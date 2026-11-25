@@ -15,7 +15,8 @@ through their own hooks, so nothing has to run through a separate multiplexer.
 ### Agent hooks
 
 Agents call `"$TMUX_AGENTS" state <working|blocked|done|clear>` from inside their pane. The plugin
-exports `TMUX_AGENTS` to every pane created after it loads. Set up the hooks once:
+exports `TMUX_AGENTS` to tmux's global environment; the bundled hooks read it from there when their pane
+predates the plugin, so agents in existing panes work after a restart. Set up the hooks once:
 
 ```sh
 ~/.config/tmux/plugins/tmux-agents/integrations/install.sh install    # or: uninstall
