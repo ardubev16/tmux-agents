@@ -72,10 +72,17 @@ func newRenderer(width int) *glamour.TermRenderer {
 	return r
 }
 
+// render is renderLines cached per block; the live tail changes on every update, so it is not cached.
 func (c *Chat) render(markdown string) []string {
 	if lines, ok := c.cache[markdown]; ok {
 		return lines
 	}
+	lines := c.renderLines(markdown)
+	c.cache[markdown] = lines
+	return lines
+}
+
+func (c *Chat) renderLines(markdown string) []string {
 	out, err := c.renderer.Render(markdown)
 	if err != nil {
 		out = markdown
@@ -90,7 +97,6 @@ func (c *Chat) render(markdown string) []string {
 	for len(lines) > 0 && strings.TrimSpace(xansi.Strip(lines[len(lines)-1])) == "" {
 		lines = lines[:len(lines)-1]
 	}
-	c.cache[markdown] = lines
 	return lines
 }
 
@@ -145,7 +151,11 @@ func (c *Chat) relayout(prepended int) {
 		if i == prepended {
 			shift = len(lines)
 		}
-		lines = append(lines, c.render(block)...)
+		render := c.render
+		if i == len(c.Blocks) { // the live tail
+			render = c.renderLines
+		}
+		lines = append(lines, render(block)...)
 	}
 	c.lines = lines
 	switch {

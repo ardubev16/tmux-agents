@@ -99,7 +99,8 @@ function list_agents() {
         awk -F '\t' -v shell="$shell" -v home="$HOME" '
             BEGIN { OFS = "\t"; rank["blocked"] = 0; rank["done"] = 2; rank["working"] = 3 }
             $2 != "" && $4 != shell {
-                sub("^" home, "~", $5)
+                if (index($5, home) == 1 && (length($5) == length(home) || substr($5, length(home) + 1, 1) == "/"))
+                    $5 = "~" substr($5, length(home) + 1)
                 r = ($2 == "done" && $8 != "") ? 1 : rank[$2]
                 print r, $0
             }' |
@@ -164,13 +165,14 @@ function reply_agent() {
 
 function new_worktree() {
     local -r current_path=$(tmux display-message -p '#{pane_current_path}')
-    tmux display-popup -E "'$MAIN' pick_worktree '$current_path'"
+    # The path goes in as the popup's directory, not into its command line, so quotes in it are harmless.
+    tmux display-popup -d "$current_path" -E "'$MAIN' pick_worktree"
 }
 
 # Popup body: pick a branch, create or reuse its worktree, switch to a session rooted there. Errors stay on
 # screen until a key is pressed (die/the error trap pause in a popup).
 function pick_worktree() {
-    local -r current_path="$1"
+    local -r current_path="$PWD"
     local repo branch
     repo=$(repo_root "$current_path")
     branch=$(select_branch "$current_path") || return 0 # cancelled
@@ -186,6 +188,8 @@ function pick_worktree() {
 
     if [[ -z $session ]]; then
         session=$(tr '.:' '__' <<<"$(basename "$repo")@$branch")
+        # Another repo with the same folder name has this branch open: tell them apart by their project folder.
+        tmux has-session -t "=$session" 2>/dev/null && session=$(tr '.:' '__' <<<"$(basename "$(dirname "$repo")")-$session")
         tmux new-session -ds "$session" -c "$wt_path"
         local -r command="$(tmux_option @tmux_agents_worktree_command "")"
         [[ -n $command ]] && tmux send-keys -t "=$session:" "$command" Enter

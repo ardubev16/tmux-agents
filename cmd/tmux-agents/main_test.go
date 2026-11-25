@@ -200,6 +200,20 @@ func TestBlockedAgentReplyTypesIntoThePane(t *testing.T) {
 	}
 }
 
+func TestReplyGoesToTheAgentItWasOpenedFor(t *testing.T) {
+	m, _, calls := newModel(t, "")
+	press(m, "down", "down", "ctrl+r", "h", "i")
+	m.main("close_agent", "%3") // the agent exits while the reply is being typed
+	for range fps {
+		m.Update(tickMsg{})
+	}
+	m.Update(tea.MouseMsg{X: 1, Y: 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	press(m, "enter")
+	if got := calls(); !contains(got, "reply_agent %3 hi") || contains(got, "reply_agent %1 hi") {
+		t.Errorf("calls %q", got)
+	}
+}
+
 func TestLiveReplyAndQueuedPromptsStream(t *testing.T) {
 	agent, socket := serveAgent(t, "")
 	m, msgs, _ := newModel(t, socket)

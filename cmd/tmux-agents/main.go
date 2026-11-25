@@ -212,7 +212,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout()
 	case tickMsg:
 		m.frame++
-		if m.frame%fps == 0 {
+		// Not while replying: a reload could move the selection to another agent, which the reply would then go to.
+		if m.frame%fps == 0 && !m.replying {
 			m.reload()
 		}
 		if m.frame%3 == 0 {
@@ -252,7 +253,7 @@ func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
 	case tea.MouseButtonWheelDown:
 		m.scrollChat(3)
 	case tea.MouseButtonLeft:
-		if msg.Action == tea.MouseActionPress && msg.X < m.listWidth() {
+		if msg.Action == tea.MouseActionPress && msg.X < m.listWidth() && !m.replying {
 			if _, owners := m.listRows(); m.listTop+msg.Y < len(owners) && owners[m.listTop+msg.Y] >= 0 {
 				m.selected = owners[m.listTop+msg.Y]
 				m.agentChanged()
@@ -487,7 +488,7 @@ func (m *model) View() string {
 	if m.width == 0 {
 		return ""
 	}
-	body := m.height - 1
+	body := max(1, m.height-1)
 	rows, owners := m.listRows()
 	// Keep the selected agent (and its section header) in view when the list is taller than the popup.
 	for i, owner := range owners {

@@ -250,33 +250,42 @@ func (t *Transcript) Blocks(wanted int) ([]string, bool) {
 	return out, key != "" && !seen[key] && (loaded || t.start > 0)
 }
 
-type titleKey struct {
-	path        string
+type titleEntry struct {
 	mtime, size int64
+	searched    int64 // Claude Code: bytes up to here (a line boundary) were searched for ai-title lines
+	title       string
 }
 
-var titles sync.Map // titleKey -> string
+var titles sync.Map // path -> titleEntry
 
 // Title is the session name the harness gave it: omp keeps it on the first line, Claude Code appends
-// ai-title entries.
+// ai-title entries. Called every second per agent, so a changed file is only searched where it grew.
 func Title(path string) string {
 	info, err := os.Stat(path)
 	if err != nil {
 		return ""
 	}
-	key := titleKey{path, info.ModTime().UnixNano(), info.Size()}
-	if v, ok := titles.Load(key); ok {
-		return v.(string)
+	v, _ := titles.Load(path)
+	e, _ := v.(titleEntry)
+	mtime, size := info.ModTime().UnixNano(), info.Size()
+	if e.mtime == mtime && e.size == size {
+		return e.title
 	}
-	title := readTitle(path, info.Size())
-	titles.Store(key, title)
-	return title
+	if size < e.searched { // rewritten from scratch
+		e = titleEntry{}
+	}
+	e.title, e.searched = readTitle(path, size, e.searched, e.title)
+	e.mtime, e.size = mtime, size
+	titles.Store(path, e)
+	return e.title
 }
 
-func readTitle(path string, size int64) string {
+// readTitle returns the title and how far the file has now been searched for ai-title lines; Claude Code
+// files are searched backwards from the end down to from, keeping title when no newer one turns up.
+func readTitle(path string, size, from int64, title string) (string, int64) {
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return title, from
 	}
 	defer f.Close()
 	head := make([]byte, min(size, 4096))
@@ -285,24 +294,31 @@ func readTitle(path string, size int64) string {
 	if bytes.Contains(first, []byte(`"type":"title"`)) {
 		var omp struct{ Title string }
 		json.Unmarshal(first, &omp) // omp: rewritten in place on renames
-		return omp.Title
+		return omp.Title, 0
 	}
-	// Claude Code: the newest ai-title line, searched from the end.
-	for end := size; end > 0; {
-		low := max(0, end-Chunk)
+	searched := from
+	pattern := []byte(`"type":"ai-title"`)
+	for end := size; end > from; {
+		low := max(from, end-Chunk)
 		chunk := make([]byte, min(size, end+4096)-low) // overlap so a line across the boundary is found whole
 		n, _ := f.ReadAt(chunk, low)
 		chunk = chunk[:n]
-		if at := bytes.LastIndex(chunk, []byte(`"type":"ai-title"`)); at >= 0 {
-			line := chunk[bytes.LastIndexByte(chunk[:at], '\n')+1:]
-			line, _, _ = bytes.Cut(line, []byte("\n"))
+		if end == size {
+			// The last line may still be being written: search it again next time.
+			if i := bytes.LastIndexByte(chunk, '\n'); i >= 0 {
+				searched = low + int64(i) + 1
+			}
+		}
+		for at := bytes.LastIndex(chunk, pattern); at >= 0; at = bytes.LastIndex(chunk[:at], pattern) {
+			line, _, complete := bytes.Cut(chunk[bytes.LastIndexByte(chunk[:at], '\n')+1:], []byte("\n"))
 			var claude struct {
 				AITitle string `json:"aiTitle"`
 			}
-			json.Unmarshal(line, &claude)
-			return claude.AITitle
+			if complete && json.Unmarshal(line, &claude) == nil {
+				return claude.AITitle, searched
+			}
 		}
 		end = low
 	}
-	return ""
+	return title, searched
 }

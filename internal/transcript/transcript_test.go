@@ -110,6 +110,26 @@ func TestTitles(t *testing.T) {
 	if want := []string{"Omp name", "renamed", ""}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q", got, want)
 	}
+
+	// Later calls search only what was appended, including a line that was still being written.
+	appendTo := func(s string) {
+		f, err := os.OpenFile(claude, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.WriteString(s)
+		f.Close()
+	}
+	for _, step := range []struct{ appended, want string }{
+		{`{"type":"user"}` + "\n", "renamed"},
+		{`{"type":"ai-title","aiTitle":"thi`, "renamed"},
+		{`rd"}` + "\n", "third"},
+	} {
+		appendTo(step.appended)
+		if got := Title(claude); got != step.want {
+			t.Errorf("after appending %q: got %q, want %q", step.appended, got, step.want)
+		}
+	}
 }
 
 func itoa(i int) string { b, _ := json.Marshal(i); return string(b) }

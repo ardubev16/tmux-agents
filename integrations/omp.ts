@@ -132,11 +132,18 @@ function serve(): Shared {
     conn.on("close", () => shared.subscribers.delete(conn));
     conn.on("error", () => shared.subscribers.delete(conn));
   });
-  rmSync(shared.socketPath, { force: true });
+  // Without the socket the dashboard still shows the session file; never let it take the agent down.
+  server.on("error", () => {});
+  const removeSocket = () => {
+    try {
+      rmSync(shared.socketPath, { force: true });
+    } catch {}
+  };
+  removeSocket();
   server.listen(shared.socketPath);
   server.unref();
   // Normal exits only: a pane killed from the dashboard (SIGHUP) leaves a stale file, which the dashboard ignores.
-  process.on("exit", () => rmSync(shared.socketPath, { force: true }));
+  process.on("exit", removeSocket);
   return shared;
 }
 
