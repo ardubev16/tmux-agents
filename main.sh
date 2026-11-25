@@ -68,8 +68,14 @@ function notify() {
     local -r message="$1" mode=$(tmux_option @tmux_agents_notify system)
     case $mode in
     system)
-        # Best effort: a missing notify-send or notification daemon must not fail the agent's hook.
-        notify-send --app-name=tmux-agents tmux-agents "$message" 2>/dev/null || true
+        # Best effort: a missing notifier or notification daemon must not fail the agent's hook.
+        if [[ $(uname -s) == Darwin ]]; then
+            # The message goes in as an argument, never into the script, so quotes in a session name are harmless.
+            osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title "tmux-agents"' \
+                -e 'end run' "$message" >/dev/null 2>&1 || true
+        else
+            notify-send --app-name=tmux-agents tmux-agents "$message" 2>/dev/null || true
+        fi
         ;;
     tmux)
         local client
@@ -92,6 +98,20 @@ function set_session() {
     else
         tmux set-option -pu -t "$TMUX_PANE" "$socket_option"
     fi
+}
+
+# Every Claude Code hook (integrations/claude-hooks.json) runs this with the event as JSON on stdin, so what
+# each event means lives here and updates with the plugin; only the events and matchers live in the hooks.
+function claude_hook() {
+    local event transcript
+    IFS=$'\t' read -r event transcript < <(jq -r '[.hook_event_name, .transcript_path // ""] | @tsv')
+    case $event in
+    SessionStart) set_session "$transcript" ;;
+    UserPromptSubmit | PostToolUse) set_state working ;;
+    PreToolUse | Notification) set_state blocked ;; # AskUserQuestion; permission and MCP input dialogs
+    Stop) set_state "done" ;;
+    SessionEnd) set_state clear ;;
+    esac
 }
 
 # Called by tmux hooks when a pane is shown: clears its unread mark.
@@ -244,6 +264,7 @@ shift
 case "$command" in
 state) set_state "$@" ;;
 session) set_session "$@" ;;
+claude_hook) claude_hook "$@" ;;
 status_bar) status_bar "$@" ;;
 agent_dashboard) agent_dashboard "$@" ;;
 dashboard) dashboard "$@" ;;

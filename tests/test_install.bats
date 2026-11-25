@@ -41,7 +41,8 @@ EOF
     [ "$output" = '["Stop"]' ]
 }
 
-@test "claude hook gets main.sh from tmux's global environment" {
+@test "every claude hook runs main.sh claude_hook, found in tmux's global environment" {
+    [ "$(jq -r '[.hooks[][].hooks[].command] | unique | length' "$INTEGRATIONS/claude-hooks.json")" = 1 ]
     command=$(jq -r '.hooks.Stop[0].hooks[0].command' "$INTEGRATIONS/claude-hooks.json")
     mkdir -p "$BATS_TEST_TMPDIR/bin"
     printf '#!/bin/sh\necho "$@" >"%s/called"\n' "$BATS_TEST_TMPDIR" >"$BATS_TEST_TMPDIR/main.sh"
@@ -51,7 +52,7 @@ EOF
     # Always the path from tmux, also when the pane's environment has a stale one.
     run env TMUX_AGENTS=/stale/main.sh TMUX_PANE=%1 PATH="$BATS_TEST_TMPDIR/bin:$PATH" sh -c "$command"
     [ "$status" -eq 0 ]
-    [ "$(cat "$BATS_TEST_TMPDIR/called")" = "state done" ]
+    [ "$(cat "$BATS_TEST_TMPDIR/called")" = "claude_hook" ]
 
     # Outside tmux the hook is a silent no-op.
     run env -u TMUX_AGENTS -u TMUX_PANE sh -c "$command"

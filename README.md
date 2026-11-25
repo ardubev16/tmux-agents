@@ -13,8 +13,8 @@ own hooks, so nothing has to run inside a separate multiplexer.
 ## Installation
 
 Requirements: tmux ≥ 3.2, `git`, `fzf`, `jq` and [Go](https://go.dev/dl/) (the dashboard is built on first
-launch). Optional: `notify-send` for desktop notifications, [lazygit](https://github.com/jesseduffield/lazygit)
-for the dashboard's git view.
+launch). Optional: `notify-send` for desktop notifications on Linux (macOS uses `osascript`),
+[lazygit](https://github.com/jesseduffield/lazygit) for the dashboard's git view.
 
 With [TPM](https://github.com/tmux-plugins/tpm), add the plugin and press `prefix + I`:
 
@@ -46,10 +46,12 @@ can render its chat. `TMUX_AGENTS` (the path to `main.sh`) comes from tmux's glo
 - **omp / pi**: links [`integrations/omp.ts`](integrations/omp.ts) into `~/.omp/agent/extensions/`.
 - **Claude Code**: merges [`integrations/claude-hooks.json`](integrations/claude-hooks.json) into
   `~/.claude/settings.json`, keeping your own hooks. A symlinked file (e.g. from Home Manager) is left alone.
+  Every hook runs `main.sh claude_hook`, which reads the event from stdin and decides what it means.
 - **Anything else**: call the commands above from the hooks your harness provides.
 
-Re-run `install` after updating the plugin, then restart running agents (they load hooks at startup). Run
-`uninstall` before removing the plugin: TPM has no removal hook.
+Both integrations follow plugin updates on their own: omp's is a link, and Claude Code's hooks only name the
+events. Re-run `install` when `claude-hooks.json` itself changes. Run `uninstall` before removing the plugin:
+TPM has no removal hook.
 
 ## Usage
 
@@ -66,9 +68,9 @@ It shows ○ done (green), ⦿ working (yellow) and ● blocked (red) agents; co
 ### Notifications
 
 When an agent finishes or becomes blocked while its pane is not on screen, you get a desktop notification
-(`notify-send`) named after the agent's session, e.g. "Fix the login bug finished". With
-`@tmux_agents_notify 'tmux'`, the message shows in the status line of every attached client instead. (omp's own
-notifications only get through tmux from hidden panes with `allow-passthrough all`.)
+(`notify-send` on Linux, `osascript` on macOS) named after the agent's session, e.g. "Fix the login bug
+finished". With `@tmux_agents_notify 'tmux'`, the message shows in the status line of every attached client
+instead. (omp's own notifications only get through tmux from hidden panes with `allow-passthrough all`.)
 
 ### Dashboard (`prefix + O`)
 
@@ -124,7 +126,7 @@ set -g @tmux_agents_status_blocked_foreground 'red'
 # Hide counters at 0 ('off' always shows all three)
 set -g @tmux_agents_status_hide_zero 'on'
 
-# Notifications: 'system' (desktop, needs notify-send), 'tmux' (status line) or 'off'
+# Notifications: 'system' (desktop: notify-send on Linux, osascript on macOS), 'tmux' (status line) or 'off'
 set -g @tmux_agents_notify 'system'
 
 # Worktree base folder ('' = <project>/.worktrees); worktrees go to <dir>/<repo>/<branch>

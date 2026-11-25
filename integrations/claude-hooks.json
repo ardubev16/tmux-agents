@@ -1,10 +1,11 @@
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" session \"$(jq -r '.transcript_path // empty')\"; }" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state working; }" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state working; }" }] }],
-    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state blocked; }" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state done; }" }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state clear; }" }] }]
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" claude_hook; }" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" claude_hook; }" }] }],
+    "PreToolUse": [{ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" claude_hook; }" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" claude_hook; }" }] }],
+    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" claude_hook; }" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" claude_hook; }" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { TMUX_AGENTS=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p'); [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" claude_hook; }" }] }]
   }
 }

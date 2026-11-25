@@ -78,3 +78,27 @@ EOF
     [ "$status" -eq 0 ]
     run ! grep -q 'display-message -c' "$LOG"
 }
+
+@test "notify on macOS: osascript gets the message as an argument, not as script" {
+    printf '#!/bin/sh\necho Darwin\n' >"$BATS_TEST_TMPDIR/bin/uname"
+    printf '#!/bin/sh\nfor a; do echo "osascript arg: $a" >>"$LOG"; done\n' >"$BATS_TEST_TMPDIR/bin/osascript"
+    chmod +x "$BATS_TEST_TMPDIR/bin/"*
+    TMUX_PANE=%1 VISIBLE=0 run "$MAIN" state "done"
+    [ "$status" -eq 0 ]
+    grep -qx 'osascript arg: 0 finished' "$LOG" # the stub names every pane "0"
+    run ! grep -q notify-send "$LOG"
+}
+
+@test "claude_hook: each Claude Code event sets the matching state" {
+    for case in SessionStart:transcript UserPromptSubmit:working PostToolUse:working PreToolUse:blocked \
+        Notification:blocked Stop:done; do
+        : >"$LOG"
+        printf '{"hook_event_name":"%s","transcript_path":"/t.jsonl"}' "${case%:*}" |
+            TMUX_PANE=%1 VISIBLE=1 "$MAIN" claude_hook
+        if [ "${case#*:}" = transcript ]; then
+            grep -q 'set-option -p -t %1 @tmux_agents_transcript /t.jsonl' "$LOG"
+        else
+            grep -q "set-option -p -t %1 @tmux_agents_state ${case#*:}" "$LOG"
+        fi
+    done
+}
