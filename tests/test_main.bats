@@ -36,14 +36,14 @@ EOF
     [ "$(cut -f9 <<<"$output" | sort -u)" = 100 ]
 }
 
-@test "status_bar: every counter, or with hide_zero only the ones above 0" {
+@test "status_bar: only counters above 0 by default, every counter with hide_zero off" {
     printf '%s\t%s\t%s\t%s\t%s\t\t\t\t\n' %1 working s:1.0 omp /a %2 working s:2.0 omp /b >"$PANES"
-    run "$MAIN" status_bar green yellow red
+    run "$MAIN" status_bar green yellow red off
     [ "$output" = "#[fg=green] ○ 0 #[fg=yellow] ⦿ 2 #[fg=red] ● 0 " ]
-    run "$MAIN" status_bar green yellow red on
+    run "$MAIN" status_bar green yellow red
     [ "$output" = "#[fg=yellow] ⦿ 2 " ]
     : >"$PANES"
-    run "$MAIN" status_bar green yellow red on
+    run "$MAIN" status_bar green yellow red
     [ -z "$output" ]
 }
 

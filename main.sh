@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+# shellcheck source=scripts/_common.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/_common.sh"
 
 MAIN="$(realpath "${BASH_SOURCE[0]}")"
@@ -111,7 +112,7 @@ function list_agents() {
 
 # hide_zero=on leaves out counters at 0, so nothing shows while no agent runs.
 function status_bar() {
-    local -r done_foreground="$1" working_foreground="$2" blocked_foreground="$3" hide_zero="${4:-off}"
+    local -r done_foreground="$1" working_foreground="$2" blocked_foreground="$3" hide_zero="${4:-on}"
     list_agents | awk -F '\t' \
         -v d="$done_foreground" -v w="$working_foreground" -v b="$blocked_foreground" -v hide="$hide_zero" '
         function counter(color, glyph, count) {

@@ -122,7 +122,7 @@ set -g @tmux_agents_status_working_foreground 'yellow'
 set -g @tmux_agents_status_blocked_foreground 'red'
 
 # Leave out counters at 0 (nothing shows while no agent runs)
-set -g @tmux_agents_status_hide_zero 'off'
+set -g @tmux_agents_status_hide_zero 'on'
 
 # Notify when an agent becomes done/blocked off screen: 'system' (desktop, falls back to tmux), 'tmux', 'off'
 set -g @tmux_agents_notify 'system'

@@ -49,7 +49,7 @@ function init_tmux_agents_status() {
         done_foreground=$(tmux_option "$done_foreground_config" "green") \
         working_foreground=$(tmux_option "$working_foreground_config" "yellow") \
         blocked_foreground=$(tmux_option "$blocked_foreground_config" "red") \
-        hide_zero=$(tmux_option "$hide_zero_config" "off")
+        hide_zero=$(tmux_option "$hide_zero_config" "on")
 
     local -r agents_status="#[default]#[bg=$background]#(\"$CURRENT_DIR/main.sh\" status_bar \"$done_foreground\" \"$working_foreground\" \"$blocked_foreground\" \"$hide_zero\")#[default]"
 
