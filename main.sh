@@ -8,24 +8,25 @@ MAIN="$(realpath "${BASH_SOURCE[0]}")"
 declare -r MAIN
 declare -r state_option='@tmux_agents_state'
 declare -r transcript_option='@tmux_agents_transcript'
+declare -r socket_option='@tmux_agents_socket'
 
 function tmux_option() {
     local -r option=$(tmux show-option -gqv "$1")
     echo "${option:-$2}"
 }
 
-# Called by agent hooks from inside the agent's pane: <working|blocked|done|clear> [transcript path].
-# The transcript lets the dashboard render the chat itself instead of the pane's screen.
+# Called by agent hooks from inside the agent's pane: working | blocked | done | clear.
 function set_state() {
-    local -r state="$1" transcript="${2:-}"
+    local -r state="$1"
     [[ -n ${TMUX_PANE:-} ]] || return 0
 
     if [[ $state == clear ]]; then
-        tmux set-option -pu -t "$TMUX_PANE" "$state_option"
-        tmux set-option -pu -t "$TMUX_PANE" "$transcript_option"
+        local option
+        for option in "$state_option" "$transcript_option" "$socket_option"; do
+            tmux set-option -pu -t "$TMUX_PANE" "$option"
+        done
     else
         tmux set-option -p -t "$TMUX_PANE" "$state_option" "$state"
-        [[ -z $transcript ]] || tmux set-option -p -t "$TMUX_PANE" "$transcript_option" "$transcript"
     fi
 
     # Ringing the pane's bell lets tmux flag the window (! in the window/session list) and the terminal.
@@ -39,11 +40,25 @@ function set_state() {
     done < <(tmux list-clients -F '#{client_name}')
 }
 
-# One agent per line, blocked first: pane_id \t state \t target \t command \t path \t transcript
+# Called by agent hooks when a session starts or switches: <session file> [socket].
+# The session file lets the dashboard render the chat itself; the socket (omp) streams the
+# in-progress reply and shares the prompt draft.
+function set_session() {
+    local -r transcript="$1" socket="${2:-}"
+    [[ -n ${TMUX_PANE:-} && -n $transcript ]] || return 0
+    tmux set-option -p -t "$TMUX_PANE" "$transcript_option" "$transcript"
+    if [[ -n $socket ]]; then
+        tmux set-option -p -t "$TMUX_PANE" "$socket_option" "$socket"
+    else
+        tmux set-option -pu -t "$TMUX_PANE" "$socket_option"
+    fi
+}
+
+# One agent per line, blocked first: pane_id \t state \t target \t command \t path \t transcript \t socket
 function list_agents() {
     local -r shell="$(basename "$(tmux show-option -gqv default-shell)")"
     # shortcut: an agent killed without its exit hook keeps its state until its pane is back at the shell prompt.
-    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}	#{$transcript_option}" |
+    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}	#{$transcript_option}	#{$socket_option}" |
         awk -F '\t' -v shell="$shell" -v home="$HOME" '
             BEGIN { OFS = "\t"; rank["blocked"] = 0; rank["done"] = 1; rank["working"] = 2 }
             $2 != "" && $4 != shell { sub("^" home, "~", $5); print rank[$2], $0 }' |
@@ -119,6 +134,7 @@ shift
 
 case "$command" in
 state) set_state "$@" ;;
+session) set_session "$@" ;;
 status_bar) status_bar "$@" ;;
 agent_dashboard) agent_dashboard "$@" ;;
 list_agents) list_agents "$@" ;;

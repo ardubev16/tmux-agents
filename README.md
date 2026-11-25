@@ -14,7 +14,8 @@ through their own hooks, so nothing has to run through a separate multiplexer.
 
 ### Agent hooks
 
-Agents call `"$TMUX_AGENTS" state <working|blocked|done|clear> [session file]` from inside their pane. The plugin
+Agents call `"$TMUX_AGENTS" state <working|blocked|done|clear>` from inside their pane, and
+`"$TMUX_AGENTS" session <session file> [socket]` when a session starts so the dashboard can render its chat. The plugin
 exports `TMUX_AGENTS` to tmux's global environment; the bundled hooks read it from there when their pane
 predates the plugin, so agents in existing panes work after a restart. Set up the hooks once:
 
@@ -28,7 +29,8 @@ predates the plugin, so agents in existing panes work after a restart. Set up th
 - **Anything else**: call the command above from whatever hooks the harness provides.
 
 Run `uninstall` before removing the plugin: TPM gives plugins no removal hook.
-Re-run `install` after updating the plugin to pick up hook changes.
+Re-run `install` after updating the plugin to pick up hook changes, then restart running agents: hooks and
+extensions are loaded when an agent starts.
 
 ### Status indicator
 
@@ -53,11 +55,15 @@ tmux default.
 | `prefix + a` | Agent dashboard popup: agents on the left (blocked first), the highlighted agent's chat on the right. `Enter` switch to it, `Ctrl-r` reply, `Ctrl-l` refresh, `PgUp`/`PgDn` scroll the chat |
 | `prefix + W` | Pick a branch (fzf), create or reuse its worktree, and switch to a tmux session rooted there (reuses any session already there) |
 
-The chat is rendered from the agent's session file (the bundled hooks report it), so it reflows to the popup
-width and stays visible while the agent's pane shows something else, e.g. `$EDITOR` on a long prompt. Agents
-without a session file (other harnesses) show a snapshot of their pane instead.
-A reply in the dashboard sends your text followed by `Enter`. An empty reply sends just `Enter`, which accepts
-the highlighted option in a permission prompt. `Esc` cancels the reply.
+The chat is rendered from the agent's session file, so it wraps to the popup width (prose, code and tables) and
+stays visible while the agent's pane shows something else, e.g. `$EDITOR` on a long prompt. Agents without a
+session file (other harnesses, or agents started before the hooks were installed) show a snapshot of their pane.
+
+omp agents also stream their in-progress reply and current activity (thinking, running a tool) into the
+dashboard, and share their prompt draft: `Ctrl-r` opens the half-typed prompt for editing, `Enter` submits it,
+`Ctrl-j` adds a newline, and `Esc` puts your edits back into the agent's prompt. For other agents, and for an
+agent waiting on a dialog, a reply types your text followed by `Enter` into the pane; an empty reply sends just
+`Enter`, which accepts the highlighted option in a permission prompt.
 
 Worktrees go to `<project>/.worktrees/<repo>/<branch>`, where `<project>` is the folder that contains the repo
 (e.g. `~/Repos/work/.worktrees/api/feat-x`). If the branch is already checked out somewhere, that checkout is

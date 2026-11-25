@@ -1,31 +1,18 @@
-"""Turn an agent's JSONL session file (omp/pi or Claude Code) into Markdown for the dashboard."""
+"""Turn an agent's JSONL session file (omp/pi or Claude Code) into Markdown blocks for the dashboard."""
 
-import itertools
 import json
 from pathlib import Path
 
 # Tool-call argument shown next to the tool name, first match wins (omp's "i" is its intent line).
-SUMMARY_KEYS = (
-    "i",
-    "description",
-    "command",
-    "file_path",
-    "path",
-    "pattern",
-    "query",
-    "url",
-)
-# shortcut: only the tail is rendered to keep Markdown fast; raise it if long histories are needed.
-MAX_BLOCKS = 80
+SUMMARY_KEYS = ("i", "description", "command", "file_path", "path", "pattern", "query", "url")
+TOOL_PREFIX = "- `"
 
 
 def _active_branch(entries: list[dict]) -> list[dict]:
     """Both formats are trees (rewinds/forks branch off): walk back from the last entry to the root."""
     by_id = {e.get("id") or e.get("uuid"): e for e in entries}
     by_id.pop(None, None)
-    leaf = next(
-        (e for e in reversed(entries) if (e.get("id") or e.get("uuid")) in by_id), None
-    )
+    leaf = next((e for e in reversed(entries) if (e.get("id") or e.get("uuid")) in by_id), None)
     branch, seen = [], set()
     while leaf is not None and id(leaf) not in seen:
         seen.add(id(leaf))
@@ -37,19 +24,13 @@ def _active_branch(entries: list[dict]) -> list[dict]:
 def _tool_line(name: str, args: object) -> str:
     summary = ""
     if isinstance(args, dict):
-        summary = next(
-            (str(args[k]) for k in SUMMARY_KEYS if isinstance(args.get(k), str)), ""
-        )
+        summary = next((str(args[k]) for k in SUMMARY_KEYS if isinstance(args.get(k), str)), "")
     summary = " ".join(summary.split())[:100].replace("`", "'")
-    return f"- `{name}` {summary}".rstrip()
+    return f"{TOOL_PREFIX}{name}` {summary}".rstrip()
 
 
 def _blocks(entry: dict) -> list[str]:
-    if (
-        entry.get("isMeta")
-        or entry.get("isSidechain")
-        or entry.get("type") not in ("message", "user", "assistant")
-    ):
+    if entry.get("isMeta") or entry.get("isSidechain") or entry.get("type") not in ("message", "user", "assistant"):
         return []
     message = entry.get("message") or {}
     role, content = message.get("role"), message.get("content")
@@ -70,27 +51,24 @@ def _blocks(entry: dict) -> list[str]:
                 text = "\n".join(f"> {line}" for line in text.splitlines())
             blocks.append(text)
         elif kind in ("toolCall", "tool_use"):
-            blocks.append(
-                _tool_line(
-                    part.get("name", "?"), part.get("arguments", part.get("input"))
-                )
-            )
+            blocks.append(_tool_line(part.get("name", "?"), part.get("arguments", part.get("input"))))
     return blocks
 
 
-def to_markdown(path: str) -> str:
+def to_blocks(path: str) -> list[str]:
+    """Markdown blocks of the conversation, oldest first; consecutive tool calls share one block."""
     entries = []
+    if not Path(path).is_file():
+        return []
     for line in Path(path).read_text(errors="replace").splitlines():
         try:
             entries.append(json.loads(line))
         except json.JSONDecodeError:
             continue  # a line still being written
-    blocks = [b for e in _active_branch(entries) for b in _blocks(e)][-MAX_BLOCKS:]
-    # Consecutive tool calls form one tight list; everything else is its own paragraph.
-    out = blocks[:1]
-    for prev, block in itertools.pairwise(blocks):
-        out.append(
-            ("\n" if prev.startswith("- `") and block.startswith("- `") else "\n\n")
-            + block
-        )
-    return "".join(out)
+    out: list[str] = []
+    for block in (b for e in _active_branch(entries) for b in _blocks(e)):
+        if out and block.startswith(TOOL_PREFIX) and out[-1].startswith(TOOL_PREFIX):
+            out[-1] += "\n" + block
+        else:
+            out.append(block)
+    return out

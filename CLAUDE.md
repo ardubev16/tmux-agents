@@ -11,19 +11,23 @@ See README.md for user-facing usage, keybindings, and configuration options.
   binds keys, exports `TMUX_AGENTS` (path to `main.sh`) for agent hooks, wires up the
   status bar placeholder.
 - `main.sh` — the only file allowed to call `tmux` directly. Dispatches subcommands
-  (`state`, `status_bar`, `agent_dashboard` and its callbacks, `new_worktree`).
-  Agent state lives in the pane option `@tmux_agents_state`, the agent's session file
-  (reported by the hooks) in `@tmux_agents_transcript`.
+  (`state`, `session`, `status_bar`, `agent_dashboard` and its callbacks, `new_worktree`).
+  Per-pane options: `@tmux_agents_state`, plus what `session` reports: the agent's session
+  file (`@tmux_agents_transcript`) and, for omp, its socket (`@tmux_agents_socket`).
 - `scripts/` — everything here must run standalone, with no dependency on tmux being
   present or active.
   - `_common.sh` — generic helpers (git metadata, worktree creation, fzf branch picker,
     error trap/`die`). Sourced by every other script in this directory.
   - `dashboard.sh`, `select_branch.sh`, `worktree.sh` — thin entry points run in popups or
     by `main.sh`. `dashboard.sh` launches the Python dashboard via `uv run`.
-- `src/tmux_agents/` — the dashboard TUI (Textual, uv package). `transcript.py` turns omp
-  and Claude Code JSONL session files into Markdown. Calls back into `main.sh` for anything
-  touching tmux, so it stays tmux-free like `scripts/`.
-- `integrations/` — harness hooks that call `"$TMUX_AGENTS" state <state>`.
+- `src/tmux_agents/` — the dashboard TUI (Textual, uv package). Calls back into `main.sh` for
+  anything touching tmux, so it stays tmux-free like `scripts/`.
+  - `transcript.py` — omp and Claude Code JSONL session files → Markdown blocks.
+  - `chat.py` — line-API scroll view rendering those blocks with Rich Markdown at the view
+    width (wraps prose, code and tables; cached per width) plus a live streaming tail.
+  - `agent_socket.py` — NDJSON client for the agent socket (draft get/set, live stream).
+- `integrations/` — harness hooks that call `"$TMUX_AGENTS" state|session …`. `omp.ts` also
+  serves the agent socket; Claude Code has no equivalent, so it gets no streaming or drafts.
 
 Rule of thumb: `main.sh` = tmux; everything in `scripts/` = tmux-free glue.
 

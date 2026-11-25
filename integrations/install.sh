@@ -8,10 +8,10 @@ INTEGRATIONS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OMP_EXTENSION="$HOME/.omp/agent/extensions/tmux-agents.ts"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 
-# Drops every hook entry that calls "$TMUX_AGENTS" state, then any event left empty by that.
+# Drops every hook entry that calls "$TMUX_AGENTS" (state/session), then any event left empty by that.
 # shellcheck disable=SC2016 # $TMUX_AGENTS is matched literally.
 STRIP='def strip: if .hooks then .hooks |= (
-    with_entries(.value |= map(select(any(.hooks[]?; (.command // "") | contains("\"$TMUX_AGENTS\" state")) | not)))
+    with_entries(.value |= map(select(any(.hooks[]?; (.command // "") | contains("\"$TMUX_AGENTS\" ")) | not)))
     | with_entries(select(.value | length > 0))) else . end;'
 
 function write_claude_settings() {
