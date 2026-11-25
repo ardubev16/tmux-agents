@@ -102,17 +102,3 @@ function ensure_worktree() {
 
     echo "$wt_path"
 }
-
-# Agent dashboard: $1 = main.sh (callbacks for list/preview/reply/switch).
-function agent_dashboard() {
-    local -r main="$1"
-    "$main" list_agents | fzf \
-        --delimiter='\t' --with-nth=2.. --no-sort --reverse \
-        --prompt='agent> ' \
-        --header='enter: switch · ctrl-r: reply · ctrl-l: refresh · esc: close' \
-        --preview="'$main' preview_agent {1}" \
-        --preview-window='right,65%,follow' \
-        --bind="enter:become('$main' switch_agent {1})" \
-        --bind="ctrl-r:execute('$main' reply_agent {1})+reload('$main' list_agents)+refresh-preview" \
-        --bind="ctrl-l:reload('$main' list_agents)+refresh-preview" || true
-}

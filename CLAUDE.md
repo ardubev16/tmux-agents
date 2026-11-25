@@ -11,14 +11,16 @@ See README.md for user-facing usage, keybindings, and configuration options.
   binds keys, exports `TMUX_AGENTS` (path to `main.sh`) for agent hooks, wires up the
   status bar placeholder.
 - `main.sh` — the only file allowed to call `tmux` directly. Dispatches subcommands
-  (`state`, `status_bar`, `agent_dashboard` and its fzf callbacks, `new_worktree`).
+  (`state`, `status_bar`, `agent_dashboard` and its callbacks, `new_worktree`).
   Agent state lives in the pane option `@tmux_agents_state`.
 - `scripts/` — everything here must run standalone, with no dependency on tmux being
   present or active.
-  - `_common.sh` — generic helpers (git metadata, worktree creation, fzf branch picker
-    and dashboard UI, error trap/`die`). Sourced by every other script in this directory.
+  - `_common.sh` — generic helpers (git metadata, worktree creation, fzf branch picker,
+    error trap/`die`). Sourced by every other script in this directory.
   - `dashboard.sh`, `select_branch.sh`, `worktree.sh` — thin entry points run in popups or
-    by `main.sh`. The dashboard calls back into `main.sh` for anything touching tmux.
+    by `main.sh`. `dashboard.sh` launches the Python dashboard via `uv run`.
+- `src/tmux_agents/` — the dashboard TUI (Textual, uv package). Calls back into `main.sh`
+  for anything touching tmux, so it stays tmux-free like `scripts/`.
 - `integrations/` — harness hooks that call `"$TMUX_AGENTS" state <state>`.
 
 Rule of thumb: `main.sh` = tmux; everything in `scripts/` = tmux-free glue.
@@ -29,3 +31,6 @@ Use [bats-core](https://github.com/bats-core/bats-core) (`bats`) for tests. See
 `tests/test_common.bats` for the pattern: source the script under test standalone in a
 `bash -c` snippet (stub `tmux` as a shell function if needed) and assert on `$status`/
 `$output` from bats' `run`. Run with `bats tests/`.
+
+The dashboard is tested with pytest + Textual's `run_test` pilot against a fake `main.sh`
+(`tests/test_dashboard.py`). Run with `uv run pytest`.

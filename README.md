@@ -49,11 +49,12 @@ tmux default.
 
 | Key          | Action                                                                                                                       |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `prefix + a` | Agent dashboard popup: blocked agents first, live output preview. `Enter` switch to it, `Ctrl-r` reply, `Ctrl-l` refresh     |
+| `prefix + a` | Agent dashboard: full-screen popup, blocked agents first, live output preview. `Enter` switch to it, `Ctrl-r` reply, `Ctrl-l` refresh, `PgUp`/`PgDn` scroll the output |
 | `prefix + W` | Pick a branch (fzf), create or reuse its worktree, and switch to a tmux session rooted there (reuses any session already there) |
 
+The preview spans the whole popup width, so agents in wide or full-screen panes show without wrapping or cutting.
 A reply in the dashboard sends your text followed by `Enter`. An empty reply sends just `Enter`, which accepts
-the highlighted option in a permission prompt. `Ctrl-c` cancels the reply.
+the highlighted option in a permission prompt. `Esc` cancels the reply.
 
 Worktrees go to `<project>/.worktrees/<repo>/<branch>`, where `<project>` is the folder that contains the repo
 (e.g. `~/Repos/work/.worktrees/api/feat-x`). If the branch is already checked out somewhere, that checkout is
@@ -61,7 +62,8 @@ reused. A branch that doesn't exist yet is created from the current `HEAD`.
 
 ## Installation
 
-Dependencies: `git`, `fzf`, tmux ≥ 3.2 (popups).
+Dependencies: `git`, `fzf`, [`uv`](https://docs.astral.sh/uv/) (the dashboard is a Python app; its first
+launch sets up the plugin's `.venv`), tmux ≥ 3.2 (popups).
 
 ### Tmux Plugin Manager (recommended)
 

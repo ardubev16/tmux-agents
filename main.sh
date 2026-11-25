@@ -55,21 +55,21 @@ function status_bar() {
 }
 
 function agent_dashboard() {
-    tmux display-popup -w 90% -h 90% -E "'$SCRIPTS_DIR/dashboard.sh' '$MAIN'"
+    # Borderless full-size popup: the preview is as wide as the client, so any pane fits uncut.
+    tmux display-popup -B -w 100% -h 100% -E "'$SCRIPTS_DIR/dashboard.sh' '$MAIN'"
 }
 
 function preview_agent() {
-    tmux capture-pane -e -p -S -200 -t "$1"
+    tmux capture-pane -e -p -S -1000 -t "$1"
 }
 
 function switch_agent() {
     tmux switch-client -t "$1"
 }
 
+# Sends $2 followed by Enter; an empty $2 sends just Enter.
 function reply_agent() {
-    local -r pane="$1"
-    local text
-    read -r -e -p "reply (empty = just Enter, Ctrl-C = cancel): " text </dev/tty
+    local -r pane="$1" text="$2"
     [[ -n $text ]] && tmux send-keys -t "$pane" -l "$text"
     tmux send-keys -t "$pane" Enter
 }
