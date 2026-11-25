@@ -8,14 +8,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 type Block = { type?: string; text?: string };
-type Event = { toolName?: string; message?: { role?: string; content?: Block[] } };
+type Event = { toolName?: string; text?: string; prompt?: string; message?: { role?: string; content?: Block[] } };
 type Ctx = {
   sessionManager?: { getSessionFile?: () => string | undefined };
   ui?: { getEditorText?: () => string; setEditorText?: (text: string) => void };
 };
 type Pi = { on(event: string, handler: (event: Event, ctx: Ctx) => void): void };
 
-type Live = { text: string; thinking: boolean; tool: string; streaming: boolean };
+// queued: prompts submitted while the agent runs; omp writes them to the session file only when it delivers them.
+type Live = { text: string; thinking: boolean; tool: string; streaming: boolean; queued: string[] };
 
 export default function (pi: Pi): void {
   if (!process.env.TMUX_PANE) return;
@@ -34,7 +35,8 @@ export default function (pi: Pi): void {
   };
 
   let ctx: Ctx | undefined;
-  let live: Live = { text: "", thinking: false, tool: "", streaming: false };
+  let live: Live = { text: "", thinking: false, tool: "", streaming: false, queued: [] };
+  let running = false;
   const subscribers = new Set<Socket>();
   const push = (patch: Partial<Live>) => {
     live = { ...live, ...patch };
@@ -87,8 +89,23 @@ export default function (pi: Pi): void {
 
   pi.on("session_start", (_, c) => report(c));
   pi.on("session_switch", (_, c) => report(c));
-  pi.on("agent_start", set("working"));
-  pi.on("agent_end", set("done"));
+  pi.on("agent_start", () => {
+    running = true;
+    run("state", "working");
+  });
+  pi.on("agent_end", () => {
+    running = false;
+    run("state", "done");
+  });
+  pi.on("input", (event) => {
+    const text = event.text?.trim();
+    // Slash commands and !bash run right away instead of queueing.
+    if (running && text && !/^[/!]/.test(text)) push({ queued: [...live.queued, text] });
+  });
+  pi.on("before_agent_start", (event) => {
+    const prompt = event.prompt ?? "";
+    if (live.queued.some((q) => prompt.includes(q))) push({ queued: live.queued.filter((q) => !prompt.includes(q)) });
+  });
   pi.on("tool_approval_requested", set("blocked"));
   pi.on("tool_approval_resolved", set("working"));
   pi.on("message_update", (event) => {

@@ -186,9 +186,17 @@ async def test_live_reply_streams_into_the_chat(tmp_path):
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.press("down")
             await pilot.pause(0.2)
-            await agent.push({"text": "streaming **now**", "thinking": False, "tool": "", "streaming": True})
+            live = {"text": "streaming **now**", "thinking": False, "tool": "", "streaming": True, "queued": []}
+            await agent.push(live)
             await pilot.pause(0.2)
             assert "streaming now" in chat_text(app)[-1]
+            await agent.push({**live, "queued": ["also do this"]})
+            await pilot.pause(0.2)
+            assert [line.strip() for line in chat_text(app) if line.strip()][-3:] == [
+                "streaming now",
+                "▌ also do this",
+                "▌ queued",
+            ]
             assert "writing" in str(app.query_one("#status", Static).render())
         server.close()
 
@@ -207,4 +215,14 @@ async def test_enter_switches_and_closes(tmp_path):
     async with app.run_test() as pilot:
         await pilot.press("enter")
     assert "switch_agent %1" in log.read_text().splitlines()
+    assert app.return_code == 0
+
+
+async def test_q_closes_but_types_in_a_reply(tmp_path):
+    main_sh, log = fake_main(tmp_path)
+    app = Dashboard(main_sh)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r", "q", "enter")
+        await pilot.press("q")
+    assert "reply_agent %1 q" in log.read_text().splitlines()
     assert app.return_code == 0

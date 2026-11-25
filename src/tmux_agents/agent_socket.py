@@ -2,7 +2,7 @@
 
 Newline-delimited JSON. Requests: {"op": "get_draft"} -> {"draft": str},
 {"op": "set_draft", "text": str} -> {"ok": true}, {"op": "subscribe"} -> a stream of
-{"text": str, "thinking": bool, "tool": str, "streaming": bool} live-state snapshots.
+{"text": str, "thinking": bool, "tool": str, "streaming": bool, "queued": [str]} live-state snapshots.
 """
 
 import asyncio

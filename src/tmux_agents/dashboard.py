@@ -59,14 +59,18 @@ class Dashboard(App):
         Binding("enter", "enter", "switch / send", priority=True),
         Binding("ctrl+j,shift+enter", "newline", "newline", show=False, priority=True),
         Binding("ctrl+r", "reply", "reply"),
-        Binding("ctrl+l", "reload", "refresh"),
         Binding("pageup", "scroll_chat(-1)", "scroll", key_display="pgup/pgdn", priority=True),
         Binding("pagedown", "scroll_chat(1)", show=False, priority=True),
         Binding("escape", "close", "close"),
+        # Not priority: while replying, the text area takes q as a letter.
+        Binding("q", "close", show=False),
     ]
 
     def __init__(self, main_sh: str) -> None:
+        # ANSI theme: every color is a terminal palette slot, so the terminal's colorscheme applies.
+        # ansi_color must be set here too: filters (truecolor conversion, NO_COLOR) are chosen in __init__.
         super().__init__(ansi_color=True)
+        self.theme = "ansi-dark"
         self.main_sh = main_sh
         self.agents: dict[str, Agent] = {}
         self.frame = 0
@@ -144,7 +148,7 @@ class Dashboard(App):
                 if finished:
                     self._poll_chat(force=True)  # the finished reply is in the session file now
                 else:
-                    self.query_one(ChatLog).update(live=live.get("text", ""))
+                    self.query_one(ChatLog).update(live=self._live_markdown())
         except SOCKET_ERRORS:
             pass  # agent gone or socket stale: the session file still shows the chat
         self.live = {}
@@ -160,10 +164,16 @@ class Dashboard(App):
             return
         pane_changed = not (self.shown and key and self.shown[0] == key[0])
         self.shown = key
-        live = self.live.get("text", "") if self.live.get("streaming") else ""
-        chat.update(blocks=to_blocks(transcript) if transcript else [], live=live)
+        chat.update(blocks=to_blocks(transcript) if transcript else [], live=self._live_markdown())
         if pane_changed:
             chat.scroll_end(animate=False)
+
+    def _live_markdown(self) -> str:
+        """The in-progress reply, then prompts the agent has queued but not received yet."""
+        parts = [self.live.get("text", "")] if self.live.get("streaming") else []
+        for prompt in self.live.get("queued", []):
+            parts.append("\n".join(f"> {line}" for line in prompt.splitlines()) + "\n>\n> *queued*")
+        return "\n\n".join(p for p in parts if p)
 
     def _tick(self) -> None:
         """Animates working agents: their list icon and the status line under the chat."""
@@ -179,9 +189,9 @@ class Dashboard(App):
         if agent is None:
             return ""
         if not agent.transcript:
-            return Text("no session reported: restart the agent after installing the hooks", "dim")
+            return Text.assemble(("no session reported: restart the agent after installing the hooks", "dim"))
         if agent.state == "blocked":
-            return Text("● waiting for you", "red")
+            return Text.assemble(("● waiting for you", "red"))
         if agent.state != "working":
             return ""
         spinner = SPINNER[self.frame % len(SPINNER)]
@@ -193,7 +203,8 @@ class Dashboard(App):
             doing = "writing…"
         else:
             doing = "working…"
-        return Text(f"{spinner} {doing}", "yellow")
+        # Span styles, not a base style: Textual reads a base "yellow" as CSS #ffff00, not the palette color.
+        return Text.assemble((f"{spinner} {doing}", "yellow"))
 
     async def _set_draft(self, agent: Agent, text: str) -> bool:
         try:

@@ -29,7 +29,9 @@ class ChatLog(ScrollView, can_focus=False):
     def _render_block(self, markdown: str, width: int) -> list[Strip]:
         if markdown not in self._cache:
             console = self.app.console
-            lines = console.render_lines(Markdown(markdown), console.options.update_width(width), pad=False)
+            # ansi_dark highlights code with the terminal's palette instead of fixed RGB (monokai).
+            md = Markdown(markdown, code_theme="ansi_dark")
+            lines = console.render_lines(md, console.options.update_width(width), pad=False)
             self._cache[markdown] = [Strip(line) for line in lines]
         return self._cache[markdown]
 

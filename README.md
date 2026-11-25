@@ -52,14 +52,15 @@ tmux default.
 
 | Key          | Action                                                                                                                       |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `prefix + a` | Agent dashboard popup: agents on the left (blocked first), the highlighted agent's chat on the right. `Enter` switch to it, `Ctrl-r` reply, `Ctrl-l` refresh, `PgUp`/`PgDn` scroll the chat |
+| `prefix + a` | Agent dashboard popup: agents on the left (blocked first), the highlighted agent's chat on the right, both updating live. `Enter` switch to it, `Ctrl-r` reply, `PgUp`/`PgDn` scroll the chat, `q`/`Esc` close |
 | `prefix + W` | Pick a branch (fzf), create or reuse its worktree, and switch to a tmux session rooted there (reuses any session already there) |
 
 The chat is rendered from the agent's session file, so it wraps to the popup width (prose, code and tables) and
 stays visible while the agent's pane shows something else, e.g. `$EDITOR` on a long prompt. Only agents whose
 hooks report a session (the bundled omp and Claude Code integrations) show a chat.
 
-omp agents also stream their in-progress reply and current activity (thinking, running a tool) into the
+The dashboard uses your terminal's colorscheme. omp agents also stream their in-progress reply, current activity
+(thinking, running a tool) and prompts queued while they work (shown as *queued* until delivered) into the
 dashboard, and share their prompt draft: `Ctrl-r` opens the half-typed prompt for editing, `Enter` submits it,
 `Ctrl-j` adds a newline, and `Esc` puts your edits back into the agent's prompt. For other agents, and for an
 agent waiting on a dialog, a reply types your text followed by `Enter` into the pane; an empty reply sends just
