@@ -53,13 +53,14 @@ function set_state() {
     done < <(tmux list-clients -F '#{client_name}')
 }
 
-# The session name the harness gave the agent (omp: title line, Claude Code: last ai-title), else its window.
+# The session name the harness gave the agent (omp: title line, Claude Code: last ai-title), else its pane. Same
+# rule as the dashboard's name() and transcript.Title, which read it incrementally instead.
 function agent_name() {
     local -r transcript=$(tmux show-option -pqv -t "$1" "$transcript_option")
     local name=""
     [[ -f $transcript ]] && name=$(grep -h -e '"type":"title"' -e '"type":"ai-title"' "$transcript" |
         tail -n 1 | jq -r '.title // .aiTitle // empty' 2>/dev/null)
-    echo "${name:-$(tmux display-message -p -t "$1" '#{session_name}:#{window_index}')}"
+    echo "${name:-$(tmux display-message -p -t "$1" '#{session_name}:#{window_index}.#{pane_index}')}"
 }
 
 # @tmux_agents_notify: system (desktop notification) | tmux (status line message) | off.

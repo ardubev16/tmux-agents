@@ -94,9 +94,11 @@ agent's uncommitted changes to tracked files (`3 files +40 −12`) and unpushed 
 | `q`/`Esc` | Close the dashboard |
 
 **Replying:** for omp agents, `Ctrl-r` opens their half-typed prompt; `Enter` submits it, `Ctrl-j` adds a
-newline, `Ctrl`/`Alt` + arrows move by word, and `Esc` puts your edits back into the agent's prompt. For other
-agents, and for any agent waiting on a dialog, the reply is typed into the pane followed by `Enter`; an empty
-reply sends just `Enter`, which accepts the highlighted option of a permission prompt.
+newline, `Ctrl`/`Alt` + arrows move by word, and `Esc` puts your edits back into the agent's prompt. If the
+prompt cannot be reached, nothing is sent and the reply stays open. For other agents, and for any agent waiting
+on a dialog, the reply is typed into the pane followed by `Enter`; an empty reply sends just `Enter`, which
+accepts the highlighted option of a permission prompt. Agents without a session name are shown by their pane
+(`session:window.pane`), in the dashboard and in notifications alike.
 
 ### Worktrees (`prefix + W`)
 

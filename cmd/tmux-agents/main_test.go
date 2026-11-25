@@ -152,7 +152,7 @@ func TestListIsGroupedAndShowsNamesAndWhatNeedsYou(t *testing.T) {
 			lines = append(lines, strings.TrimSpace(ansi.Strip(row)))
 		}
 	}
-	want := []string{"Waiting", "● claude needs input", "Running", "Fix the bug", "Idle", "● omp finished"}
+	want := []string{"Waiting", "● s:1.0 needs input", "Running", "Fix the bug", "Idle", "● s:3.0 finished"}
 	for i := range want {
 		if i >= len(lines) || !strings.Contains(lines[i], want[i]) {
 			t.Fatalf("rows %q, want %q", lines, want)
@@ -195,6 +195,14 @@ func TestReplyContinuesTheAgentsDraft(t *testing.T) {
 	press(m, "ctrl+r", "!", "enter")
 	if agent.draft != "half typed ok\nx!" || !contains(calls(), "reply_agent %2 ") {
 		t.Errorf("draft %q, calls %q", agent.draft, calls())
+	}
+}
+
+func TestReplyToAnUnreachableAgentIsKeptNotTypedIntoThePane(t *testing.T) {
+	m, _, calls := newModel(t, filepath.Join(t.TempDir(), "gone.sock"))
+	press(m, "down", "ctrl+r", "h", "i", "enter")
+	if contains(calls(), "reply_agent %2 hi") || !m.replying || m.reply.Value() != "hi" || m.notice == "" {
+		t.Errorf("replying=%v value=%q notice=%q calls %q", m.replying, m.reply.Value(), m.notice, calls())
 	}
 }
 

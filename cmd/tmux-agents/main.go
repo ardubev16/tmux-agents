@@ -482,7 +482,11 @@ func (m *model) replyKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "enter":
 		if a != nil {
-			if a.sharesDraft() && m.setDraft(a, m.reply.Value()) {
+			if a.sharesDraft() {
+				if !m.setDraft(a, m.reply.Value()) {
+					m.notice = "could not reach the agent's prompt: nothing was sent"
+					return nil // keep the reply, so it is not lost
+				}
 				m.main("reply_agent", a.pane, "") // Enter submits the draft we just wrote
 			} else {
 				m.main("reply_agent", a.pane, m.reply.Value())
@@ -495,8 +499,8 @@ func (m *model) replyKey(msg tea.KeyMsg) tea.Cmd {
 		m.reply.InsertString("\n")
 		return nil
 	case "esc":
-		if a != nil && a.sharesDraft() {
-			m.setDraft(a, m.reply.Value()) // keep the edits as the agent's draft
+		if a != nil && a.sharesDraft() && !m.setDraft(a, m.reply.Value()) {
+			m.notice = "could not reach the agent's prompt: your edits were not kept"
 		}
 		m.closeReply()
 		return nil
@@ -533,11 +537,12 @@ func (m *model) layout() {
 	}
 }
 
+// name is the session name the harness gave the agent, else its pane; main.sh's agent_name follows the same rule.
 func name(a agent) string {
 	if a.title != "" {
 		return a.title
 	}
-	return a.command
+	return a.target
 }
 
 func details(a agent) string { return a.target + " · " + a.command }
