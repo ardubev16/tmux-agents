@@ -12,15 +12,17 @@ See README.md for user-facing usage, keybindings, and configuration options.
   status bar placeholder.
 - `main.sh` — the only file allowed to call `tmux` directly. Dispatches subcommands
   (`state`, `status_bar`, `agent_dashboard` and its callbacks, `new_worktree`).
-  Agent state lives in the pane option `@tmux_agents_state`.
+  Agent state lives in the pane option `@tmux_agents_state`, the agent's session file
+  (reported by the hooks) in `@tmux_agents_transcript`.
 - `scripts/` — everything here must run standalone, with no dependency on tmux being
   present or active.
   - `_common.sh` — generic helpers (git metadata, worktree creation, fzf branch picker,
     error trap/`die`). Sourced by every other script in this directory.
   - `dashboard.sh`, `select_branch.sh`, `worktree.sh` — thin entry points run in popups or
     by `main.sh`. `dashboard.sh` launches the Python dashboard via `uv run`.
-- `src/tmux_agents/` — the dashboard TUI (Textual, uv package). Calls back into `main.sh`
-  for anything touching tmux, so it stays tmux-free like `scripts/`.
+- `src/tmux_agents/` — the dashboard TUI (Textual, uv package). `transcript.py` turns omp
+  and Claude Code JSONL session files into Markdown. Calls back into `main.sh` for anything
+  touching tmux, so it stays tmux-free like `scripts/`.
 - `integrations/` — harness hooks that call `"$TMUX_AGENTS" state <state>`.
 
 Rule of thumb: `main.sh` = tmux; everything in `scripts/` = tmux-free glue.

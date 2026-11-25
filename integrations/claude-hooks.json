@@ -1,9 +1,9 @@
 {
   "hooks": {
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state working; }" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state working; }" }] }],
-    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state blocked; }" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state done; }" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state working \"$(jq -r '.transcript_path // empty')\"; }" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state working \"$(jq -r '.transcript_path // empty')\"; }" }] }],
+    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state blocked \"$(jq -r '.transcript_path // empty')\"; }" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state done \"$(jq -r '.transcript_path // empty')\"; }" }] }],
     "SessionEnd": [{ "hooks": [{ "type": "command", "command": "[ -z \"$TMUX_PANE\" ] || { : \"${TMUX_AGENTS:=$(tmux show-environment -g TMUX_AGENTS 2>/dev/null | sed -n 's/^TMUX_AGENTS=//p')}\"; [ -z \"$TMUX_AGENTS\" ] || \"$TMUX_AGENTS\" state clear; }" }] }]
   }
 }

@@ -7,21 +7,25 @@ set -euo pipefail
 MAIN="$(realpath "${BASH_SOURCE[0]}")"
 declare -r MAIN
 declare -r state_option='@tmux_agents_state'
+declare -r transcript_option='@tmux_agents_transcript'
 
 function tmux_option() {
     local -r option=$(tmux show-option -gqv "$1")
     echo "${option:-$2}"
 }
 
-# Called by agent hooks from inside the agent's pane: working | blocked | done | clear.
+# Called by agent hooks from inside the agent's pane: <working|blocked|done|clear> [transcript path].
+# The transcript lets the dashboard render the chat itself instead of the pane's screen.
 function set_state() {
-    local -r state="$1"
+    local -r state="$1" transcript="${2:-}"
     [[ -n ${TMUX_PANE:-} ]] || return 0
 
     if [[ $state == clear ]]; then
         tmux set-option -pu -t "$TMUX_PANE" "$state_option"
+        tmux set-option -pu -t "$TMUX_PANE" "$transcript_option"
     else
         tmux set-option -p -t "$TMUX_PANE" "$state_option" "$state"
+        [[ -z $transcript ]] || tmux set-option -p -t "$TMUX_PANE" "$transcript_option" "$transcript"
     fi
 
     # Ringing the pane's bell lets tmux flag the window (! in the window/session list) and the terminal.
@@ -35,11 +39,11 @@ function set_state() {
     done < <(tmux list-clients -F '#{client_name}')
 }
 
-# One agent per line, blocked first: pane_id \t state \t target \t command \t path
+# One agent per line, blocked first: pane_id \t state \t target \t command \t path \t transcript
 function list_agents() {
     local -r shell="$(basename "$(tmux show-option -gqv default-shell)")"
     # shortcut: an agent killed without its exit hook keeps its state until its pane is back at the shell prompt.
-    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}" |
+    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}	#{$transcript_option}" |
         awk -F '\t' -v shell="$shell" -v home="$HOME" '
             BEGIN { OFS = "\t"; rank["blocked"] = 0; rank["done"] = 1; rank["working"] = 2 }
             $2 != "" && $4 != shell { sub("^" home, "~", $5); print rank[$2], $0 }' |
@@ -55,8 +59,7 @@ function status_bar() {
 }
 
 function agent_dashboard() {
-    # Borderless full-size popup: the preview is as wide as the client, so any pane fits uncut.
-    tmux display-popup -B -w 100% -h 100% -E "'$SCRIPTS_DIR/dashboard.sh' '$MAIN'"
+    tmux display-popup -w 90% -h 90% -E "'$SCRIPTS_DIR/dashboard.sh' '$MAIN'"
 }
 
 function preview_agent() {

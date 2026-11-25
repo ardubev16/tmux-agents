@@ -2,7 +2,8 @@
 import { execFileSync } from "node:child_process";
 
 type ToolEvent = { toolName?: string };
-type Pi = { on(event: string, handler: (event: ToolEvent) => void): void };
+type Ctx = { sessionManager?: { getSessionFile?: () => string | undefined } };
+type Pi = { on(event: string, handler: (event: ToolEvent, ctx: Ctx) => void): void };
 
 export default function (pi: Pi): void {
   if (!process.env.TMUX_PANE) return;
@@ -10,19 +11,20 @@ export default function (pi: Pi): void {
   if (!main) return;
 
   // Sync keeps transitions ordered and survives the process exiting right after session_shutdown; tmux calls take ms.
-  const set = (state: string) => {
+  // The session file lets the dashboard render the chat itself; it follows /new and /resume on the next state change.
+  const set = (state: string, ctx?: Ctx) => {
     try {
-      execFileSync(main, ["state", state], { stdio: "ignore" });
+      execFileSync(main, ["state", state, ctx?.sessionManager?.getSessionFile?.() ?? ""], { stdio: "ignore" });
     } catch {}
   };
 
-  pi.on("agent_start", () => set("working"));
-  pi.on("agent_end", () => set("done"));
-  pi.on("tool_approval_requested", () => set("blocked"));
-  pi.on("tool_approval_resolved", () => set("working"));
+  pi.on("agent_start", (_, ctx) => set("working", ctx));
+  pi.on("agent_end", (_, ctx) => set("done", ctx));
+  pi.on("tool_approval_requested", (_, ctx) => set("blocked", ctx));
+  pi.on("tool_approval_resolved", (_, ctx) => set("working", ctx));
   // The ask tool waits for the user's answer.
-  pi.on("tool_execution_start", (event) => event.toolName === "ask" && set("blocked"));
-  pi.on("tool_execution_end", (event) => event.toolName === "ask" && set("working"));
+  pi.on("tool_execution_start", (event, ctx) => event.toolName === "ask" && set("blocked", ctx));
+  pi.on("tool_execution_end", (event, ctx) => event.toolName === "ask" && set("working", ctx));
   pi.on("session_shutdown", () => set("clear"));
 }
 
