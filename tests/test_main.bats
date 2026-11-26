@@ -37,6 +37,16 @@ EOF
     [ "$(cut -f9 <<<"$output" | sort -u | tr '\n' ' ')" = " 100 " ]
 }
 
+@test "list_agents: within a section, the one waiting longest first, unknown wait last" {
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t\t%s\t%s\n' \
+        %1 blocked s:1.0 omp /a '' '' 300 \
+        %2 blocked s:2.0 omp /b '' '' 100 \
+        %3 "done" s:3.0 omp /c '' '' '' \
+        %4 "done" s:4.0 omp /d '' '' 200 >"$PANES"
+    run "$MAIN" list_agents
+    [ "$(cut -f1 <<<"$output" | tr '\n' ' ')" = "%2 %1 %4 %3 " ]
+}
+
 @test "status_bar: only counters above 0 by default, every counter with hide_zero off" {
     printf '%s\t%s\t%s\t%s\t%s\t\t\t\t\n' %1 working s:1.0 omp /a %2 working s:2.0 omp /b >"$PANES"
     run "$MAIN" status_bar green yellow red off

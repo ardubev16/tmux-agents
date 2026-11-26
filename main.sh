@@ -148,8 +148,8 @@ function seen() {
 }
 
 # One agent per line (panes with a state, or a session reported but no prompt yet), blocked first, then unread
-# done, then idle: pane_id \t state \t target \t command \t path \t transcript \t socket \t unread \t since (epoch
-# seconds the state began)
+# done, then idle, then working; within each, the one in its state the longest first: pane_id \t state \t target \t
+# command \t path \t transcript \t socket \t unread \t since (epoch seconds the state began)
 function list_agents() {
     local -r shell="$(basename "$(tmux show-option -gqv default-shell)")"
     # shortcut: an agent killed without its exit hook keeps its state until its pane is back at the shell prompt.
@@ -158,9 +158,9 @@ function list_agents() {
             BEGIN { OFS = "\t"; rank["blocked"] = 0; rank["done"] = 2; rank[""] = 2; rank["working"] = 3 }
             ($2 != "" || $6 != "") && $4 != shell {
                 r = ($2 == "done" && $8 != "") ? 1 : rank[$2]
-                print r, $0
+                print r, ($9 == "" ? 9999999999 : $9), $0 # unknown since: last in its section
             }' |
-        sort -s -n -k1,1 | cut -f2-
+        sort -s -t $'\t' -k1,1n -k2,2n | cut -f3-
 }
 
 # hide_zero=on leaves out counters at 0, so nothing shows while no agent runs.
