@@ -472,12 +472,16 @@ func (t *Transcript) Blocks(wanted int) ([]Block, bool) {
 			}
 			break // parent not in the file (e.g. compacted away): that is the root
 		}
+		if e.Type == "reset_boundary" { // omp /clear: what came before is out of the agent's context
+			key = ""
+			break
+		}
 		seen[key] = true
 		chain = append(chain, e.blocks())
 		count += len(chain[len(chain)-1])
 		key = e.parent()
 	}
-	var out []Block
+	out := []Block{} // not nil, even for a session without messages yet: nil keeps the chat shown before
 	calls := map[string]int{} // tool call id -> its block in out
 	for i := len(chain) - 1; i >= 0; i-- {
 		for _, b := range chain[i] {

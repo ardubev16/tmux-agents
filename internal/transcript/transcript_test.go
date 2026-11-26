@@ -77,6 +77,28 @@ func TestOmpShowsOnlyTheActiveBranch(t *testing.T) {
 	}
 }
 
+func TestOmpClearStartsOver(t *testing.T) {
+	path := writeJSONL(t, "s.jsonl",
+		omp("1", nil, "user", text("old task")),
+		m{"type": "reset_boundary", "id": "2", "parentId": "1"},
+		omp("3", "2", "user", text("new task")),
+	)
+	got, more := texts(New(path).Blocks(100))
+	if want := []string{"> new task"}; !reflect.DeepEqual(got, want) || more {
+		t.Errorf("got %q (more %v), want %q", got, more, want)
+	}
+}
+
+func TestOmpNewSessionWithoutMessagesIsEmptyNotNil(t *testing.T) {
+	path := writeJSONL(t, "s.jsonl",
+		m{"type": "session", "id": "s"},
+		m{"type": "thinking_level_change", "id": "1", "parentId": nil},
+	)
+	if blocks, _ := New(path).Blocks(100); blocks == nil || len(blocks) != 0 {
+		t.Errorf("got %#v, want an empty non-nil slice", blocks)
+	}
+}
+
 func TestClaude(t *testing.T) {
 	path := writeJSONL(t, "c.jsonl",
 		m{"type": "user", "uuid": "1", "parentUuid": nil, "message": m{"role": "user", "content": "hi\nthere"}},
