@@ -38,10 +38,10 @@ run-shell ~/.tmux/plugins/tmux-agents/main.tmux
 Agents report to the plugin from inside their pane: `"$TMUX_AGENTS" state <working|blocked|done|clear>` on
 every state change, and `"$TMUX_AGENTS" session <session file> [socket]` when a session starts, so the dashboard
 can render its chat. `TMUX_AGENTS` (the path to `main.sh`) comes from tmux's global environment:
-`tmux show-environment -g TMUX_AGENTS`. Install the bundled hooks once:
+`tmux show-environment -g TMUX_AGENTS`. Install the bundled hooks once, naming the harnesses you use:
 
 ```sh
-~/.tmux/plugins/tmux-agents/integrations/install.sh install    # or: uninstall
+~/.tmux/plugins/tmux-agents/integrations/install.sh install omp claude    # or: uninstall omp claude
 ```
 
 - **omp / pi**: links [`integrations/omp.ts`](integrations/omp.ts) into `~/.omp/agent/extensions/`.

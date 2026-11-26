@@ -13,8 +13,8 @@ EOF
 }
 
 @test "install is idempotent and keeps the user's own hooks" {
-    "$INSTALL" install
-    "$INSTALL" install
+    "$INSTALL" install omp claude
+    "$INSTALL" install omp claude
     run jq -c '[.model, (.hooks.Stop | map(.hooks[0].command)), (.hooks.UserPromptSubmit | length)]' "$HOME/.claude/settings.json"
     ours=$(jq -c '.hooks.Stop[0].hooks[0].command' "$INTEGRATIONS/claude-hooks.json")
     [ "$output" = "[\"sonnet\",[\"mine.sh\",$ours],1]" ]
@@ -22,9 +22,9 @@ EOF
 }
 
 @test "uninstall restores the original settings and removes only our link" {
-    "$INSTALL" install
+    "$INSTALL" install omp claude
     touch "$HOME/.omp/agent/extensions/other.ts"
-    "$INSTALL" uninstall
+    "$INSTALL" uninstall omp claude
     run jq -c . "$HOME/.claude/settings.json"
     [ "$output" = '{"model":"sonnet","hooks":{"Stop":[{"hooks":[{"type":"command","command":"mine.sh"}]}]}}' ]
     [ ! -e "$HOME/.omp/agent/extensions/tmux-agents.ts" ]
@@ -34,11 +34,22 @@ EOF
 @test "symlinked (externally managed) settings are left untouched" {
     mv "$HOME/.claude/settings.json" "$HOME/real.json"
     ln -s "$HOME/real.json" "$HOME/.claude/settings.json"
-    run "$INSTALL" install
+    run "$INSTALL" install claude
     [ "$status" -eq 0 ]
     [[ "$output" == *"is a symlink"* ]]
     run jq -c '.hooks | keys' "$HOME/real.json"
     [ "$output" = '["Stop"]' ]
+}
+
+@test "only the named harnesses are installed, and an unknown one installs nothing" {
+    "$INSTALL" install claude
+    [ ! -e "$HOME/.omp/agent/extensions/tmux-agents.ts" ]
+    run "$INSTALL" install omp nope
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Unknown harness: nope"* ]]
+    [ ! -e "$HOME/.omp/agent/extensions/tmux-agents.ts" ]
+    run "$INSTALL" install
+    [ "$status" -eq 1 ]
 }
 
 @test "every claude hook runs main.sh claude_hook, found in tmux's global environment" {
