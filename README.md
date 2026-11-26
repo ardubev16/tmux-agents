@@ -96,6 +96,7 @@ header shows the agent's uncommitted changes to tracked files (`3 files +40 −1
 | `n` | Highlight the next agent waiting for you or finished while you were away |
 | `Enter` | Switch to the agent's pane |
 | `Ctrl-r` | Reply (see below) |
+| `p` | List the tasks you gave the agent in this session: when you sent each and how long it worked on it (messages sent while it worked count toward its task); `Enter` scrolls the chat to one |
 | `/` | Fuzzy-filter the list by name, pane or command; `Enter` keeps the filter, `Esc` clears it |
 | `Tab` | Run lazygit in the agent's folder in place of the chat; keys and mouse go to it until you quit it |
 | `PgUp`/`PgDn`, wheel | Scroll the chat; scrolling to the top loads older messages |
