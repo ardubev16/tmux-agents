@@ -51,6 +51,18 @@ func TestNumbersHighlightAgents(t *testing.T) {
 	}
 }
 
+func TestQuestionMarkListsKeybindings(t *testing.T) {
+	m, _, _ := newModel(t, "")
+	press(m, "?")
+	if !strings.Contains(ansi.Strip(m.View()), "Keybindings") {
+		t.Fatal("? shows no keybindings")
+	}
+	press(m, "j") // ignored while open
+	if cmd := m.key(tea.KeyMsg{Type: tea.KeyEsc}); cmd != nil || m.keysOpen || m.selected != 0 {
+		t.Errorf("esc should close the panel, not the dashboard; selected %d", m.selected)
+	}
+}
+
 // fakeAgent is the omp integration's socket: it serves a draft and pushes live snapshots.
 type fakeAgent struct {
 	draft string

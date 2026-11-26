@@ -100,6 +100,7 @@ header shows the agent's uncommitted changes to tracked files (`3 files +40 −1
 | Click a thought or tool call | Expand it, or fold it back |
 | `x`, `x` | Stop the agent like a normal exit (SIGTERM, so it saves its session) and close its pane |
 | `q`/`Esc` | Close the dashboard |
+| `?` | List the keybindings in place of the chat; the bar at the bottom shows only the ones a vim user would not guess |
 
 **Replying:** for omp agents, `Ctrl-r` opens their half-typed prompt; `Enter` submits it, `Ctrl-j` adds a
 newline, `Ctrl`/`Alt` + arrows move by word, and `Esc` puts your edits back into the agent's prompt. If the

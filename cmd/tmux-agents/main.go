@@ -203,6 +203,8 @@ type model struct {
 	replying bool
 	reply    textarea.Model
 
+	keysOpen bool // the keybindings panel (?) shows in place of the chat
+
 	width, height int
 }
 
@@ -538,8 +540,46 @@ func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
 	return nil
 }
 
+// keybindings is what ? lists; the bar at the bottom shows only the keys a vim user would not guess.
+var keybindings = [][2]string{
+	{"↑/k ↓/j", "highlight the previous/next agent"},
+	{"1-9", "highlight the agent with that number"},
+	{"click", "highlight an agent; in the chat, expand or fold a step"},
+	{"enter", "switch to the agent's pane"},
+	{"ctrl+r", "reply to the agent"},
+	{"/", "filter the agents by name, pane or command"},
+	{"tab", "lazygit in the agent's folder"},
+	{"pgup/pgdn, wheel", "scroll the chat; at the top, load older messages"},
+	{"x x", "stop the agent and close its pane"},
+	{"?", "show or hide these keybindings"},
+	{"q/esc", "close the dashboard"},
+}
+
+func (m *model) keysView() string {
+	width := 0
+	for _, k := range keybindings {
+		width = max(width, ansi.StringWidth(k[0]))
+	}
+	lines := []string{bold.Render("Keybindings"), ""}
+	for _, k := range keybindings {
+		lines = append(lines, busy.Render(k[0]+strings.Repeat(" ", width-ansi.StringWidth(k[0])))+"  "+k[1])
+	}
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(theme.Current.Border)).
+		Padding(0, 1).MaxWidth(m.rightWidth()).Render(strings.Join(lines, "\n"))
+	return lipgloss.Place(m.rightWidth(), m.chatHeight(), lipgloss.Center, lipgloss.Center, box)
+}
+
 func (m *model) key(msg tea.KeyMsg) tea.Cmd {
+	if m.keysOpen {
+		switch msg.String() {
+		case "?", "esc", "q":
+			m.keysOpen = false
+		}
+		return nil
+	}
 	switch msg.String() {
+	case "?":
+		m.keysOpen = true
 	case "up", "k":
 		if m.selected > 0 {
 			m.selected--
@@ -878,9 +918,12 @@ func (m *model) View() string {
 	list := lipgloss.NewStyle().Width(m.listWidth()).Height(body).MaxHeight(body).Render(strings.Join(rows, "\n"))
 	chatView := lipgloss.JoinHorizontal(lipgloss.Top,
 		lipgloss.NewStyle().Width(m.chatWidth()).Render(m.chat.View()), " ", m.scrollbar())
-	if m.lazygit != nil {
+	switch {
+	case m.lazygit != nil:
 		chatView = lipgloss.NewStyle().Width(m.rightWidth()).MaxWidth(m.rightWidth()).
 			Height(m.chatHeight()).MaxHeight(m.chatHeight()).Render(m.lazygit.View())
+	case m.keysOpen:
+		chatView = m.keysView()
 	}
 	right := []string{m.header(), border.Render(strings.Repeat("─", m.rightWidth())), chatView, "", m.status()}
 	if m.replying {
@@ -888,14 +931,16 @@ func (m *model) View() string {
 	}
 	sep := border.Render(strings.Repeat("│\n", body-1) + "│")
 	main := lipgloss.JoinHorizontal(lipgloss.Top, list, sep, " ", strings.Join(right, "\n"))
-	help := "↑↓/1-9 select · ⏎ switch · ^r reply · / filter · tab lazygit · pgup/pgdn scroll · click a step to expand it · x close agent · q/esc close"
+	help := "⏎ switch · ^r reply · tab lazygit · x close agent · ? keybindings"
 	switch {
 	case m.lazygit != nil:
 		help = "keys go to lazygit · quit it (q) to return to the chat"
 	case m.replying:
 		help = "⏎ send · ^j newline · esc keep as draft"
 	case m.filtering:
-		help = "type to fuzzy filter by name, pane or command · ↑↓ select · ⏎ keep · esc clear"
+		help = "type to fuzzy filter by name, pane or command · ⏎ keep · esc clear"
+	case m.keysOpen:
+		help = "esc close"
 	}
 	return main + "\n" + dim.Render(ansi.Truncate(help, m.width, "…"))
 }
