@@ -176,9 +176,7 @@ function status_bar() {
 }
 
 function agent_dashboard() {
-    # Text in the terminal's color, as in panes, not popup-style's (e.g. a theme's brighter white); -s replaces
-    # popup-style, so the rest of it is repeated.
-    tmux display-popup -w 90% -h 90% -s "$(tmux show-option -gqv popup-style),fg=default" -E "'$MAIN' dashboard"
+    tmux display-popup -w 90% -h 90% -E "'$MAIN' dashboard"
 }
 
 # Popup body: runs the dashboard released with this version of the plugin, downloading it on first use and after
