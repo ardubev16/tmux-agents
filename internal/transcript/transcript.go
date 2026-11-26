@@ -481,7 +481,7 @@ func (t *Transcript) Blocks(wanted int) ([]Block, bool) {
 		count += len(chain[len(chain)-1])
 		key = e.parent()
 	}
-	out := []Block{} // not nil, even for a session without messages yet: nil keeps the chat shown before
+	out := []Block{}          // not nil, even for a session without messages yet: nil keeps the chat shown before
 	calls := map[string]int{} // tool call id -> its block in out
 	for i := len(chain) - 1; i >= 0; i-- {
 		for _, b := range chain[i] {
