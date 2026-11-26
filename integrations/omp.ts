@@ -84,11 +84,12 @@ export default function (pi: Pi): void {
     // Slash commands and !bash run right away instead of queueing.
     if (shared.running && text && !/^[/!]/.test(text)) push({ queued: [...shared.live.queued, text] });
   });
-  on("before_agent_start", (event) => {
-    const prompt = event.prompt ?? "";
+  // A queued prompt reaches the agent with the next run (before_agent_start) or, steering, mid-run as a user message.
+  const delivered = (prompt: string) => {
     const queued = shared.live.queued;
     if (queued.some((q) => prompt.includes(q))) push({ queued: queued.filter((q) => !prompt.includes(q)) });
-  });
+  };
+  on("before_agent_start", (event) => delivered(event.prompt ?? ""));
   on("tool_approval_requested", () => run("state", "blocked"));
   on("tool_approval_resolved", () => run("state", "working"));
   on("message_update", (event) => {
@@ -109,6 +110,7 @@ export default function (pi: Pi): void {
   });
   on("message_end", (event) => {
     if (event.message?.role === "assistant") push({ text: "", thoughts: "", thinking: false, streaming: false });
+    if (event.message?.role === "user") delivered((event.message.content ?? []).map((b) => b.text ?? "").join("\n"));
   });
   on("tool_execution_start", (event) => {
     push({ tool: event.toolName ?? "tool" });
