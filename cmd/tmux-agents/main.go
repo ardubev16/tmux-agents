@@ -273,20 +273,21 @@ func (m *model) agentChanged() {
 
 func (m *model) pollChat(force bool) {
 	a := m.agent()
-	key := ""
+	key, exists := "", false
 	if a != nil {
 		key = a.pane
 		// omp creates the session file with the first message; until then the chat is just the live reply.
 		if info, err := os.Stat(a.transcript); err == nil && a.transcript != "" {
-			key = fmt.Sprint(a.pane, info.ModTime().UnixNano(), info.Size(), m.wanted)
+			key, exists = fmt.Sprint(a.pane, info.ModTime().UnixNano(), info.Size(), m.wanted), true
 		}
 	}
 	if key == m.shown && !force {
 		return
 	}
 	m.shown = key
+	// Not nil: nil would keep the blocks shown before, i.e. the previously selected agent's chat.
 	blocks, more := []string{}, false
-	if a != nil && a.transcript != "" {
+	if exists {
 		t, ok := m.transcripts[a.transcript]
 		if !ok {
 			t = transcript.New(a.transcript)
