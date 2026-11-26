@@ -185,6 +185,8 @@ function agent_dashboard() {
 function dashboard() {
     local -r root="$(dirname "$MAIN")"
     local -r dir="$root/bin"
+    TMUX_AGENTS_THEME=$(tmux_option @tmux_agents_theme terminal)
+    export TMUX_AGENTS_THEME
     if [[ $(tmux_option @tmux_agents_dashboard_build off) == on ]]; then
         local -r built="$dir/tmux-agents-local"
         if [[ ! -x $built || -n $(find "$root/cmd" "$root/internal" "$root/go.mod" "$root/go.sum" -newer "$built" -print -quit) ]]; then

@@ -19,6 +19,7 @@ import (
 	"github.com/ardubev16/tmux-agents/internal/agentsocket"
 	"github.com/ardubev16/tmux-agents/internal/chat"
 	"github.com/ardubev16/tmux-agents/internal/term"
+	"github.com/ardubev16/tmux-agents/internal/theme"
 	"github.com/ardubev16/tmux-agents/internal/transcript"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -34,16 +35,22 @@ const (
 
 var spinner = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
-// Same glyphs and colors as the status bar counters, from the terminal's palette.
+// Same glyphs and colors as the status bar counters, in the theme's colors.
 var stateStyles = map[string]struct {
 	icon  string
 	color lipgloss.Color
-}{"done": {"○", "2"}, "working": {"⦿", "3"}, "blocked": {"●", "1"}}
+}{
+	"done":    {"○", lipgloss.Color(theme.Current.Done)},
+	"working": {"⦿", lipgloss.Color(theme.Current.Working)},
+	"blocked": {"●", lipgloss.Color(theme.Current.Blocked)},
+}
 
 var (
-	dim    = lipgloss.NewStyle().Faint(true)
-	bold   = lipgloss.NewStyle().Bold(true)
-	border = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	dim     = lipgloss.NewStyle().Faint(true)
+	bold    = lipgloss.NewStyle().Bold(true)
+	border  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Border))
+	warning = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Blocked))
+	busy    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Working))
 )
 
 // Agent list sections, in list_agents' order; empty ones are not shown. No state: a session opened but not prompted.
@@ -583,7 +590,7 @@ func (m *model) rightWidth() int { return max(3, m.width-m.listWidth()-2) } // s
 func (m *model) chatWidth() int  { return m.rightWidth() - 2 }              // a space and the scrollbar
 
 func (m *model) chatHeight() int {
-	h := m.height - 4 // header and its rule, status and help lines
+	h := m.height - 5 // header and its rule, a blank line, status and help lines
 	if m.replying {
 		h -= m.reply.Height() + 1
 	}
@@ -637,7 +644,7 @@ func (m *model) listRows() (rows []string, owners []int) {
 		}
 		base := lipgloss.NewStyle()
 		if i == m.selected {
-			base = base.Background(lipgloss.Color("8"))
+			base = base.Background(lipgloss.Color(theme.Current.Selected))
 		}
 		style, ok := stateStyles[a.state]
 		if !ok {
@@ -696,7 +703,7 @@ func (m *model) header() string {
 	}
 	head := bold.Render(name(*a)) + "  " + dim.Render(details(*a))
 	if m.changes != "" {
-		head += "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render(m.changes)
+		head += "  " + busy.Render(m.changes)
 	}
 	return ansi.Truncate(head, m.rightWidth(), "…")
 }
@@ -705,15 +712,15 @@ func (m *model) status() string {
 	a := m.agent()
 	switch {
 	case m.notice != "":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(m.notice)
+		return warning.Render(m.notice)
 	case a == nil:
 		return ""
 	case m.closing == a.pane:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("press x again to stop this agent and close its pane, esc to cancel")
+		return warning.Render("press x again to stop this agent and close its pane, esc to cancel")
 	case a.transcript == "":
 		return dim.Render("no session reported: restart the agent after installing the hooks")
 	case a.state == "blocked":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("● waiting for you")
+		return warning.Render("● waiting for you")
 	case a.state != "working":
 		return ""
 	}
@@ -726,7 +733,7 @@ func (m *model) status() string {
 	case m.live.Streaming:
 		doing = "writing…"
 	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render(string(spinner[m.frame%len(spinner)]) + " " + doing)
+	return busy.Render(string(spinner[m.frame%len(spinner)]) + " " + doing)
 }
 
 func (m *model) View() string {
@@ -757,7 +764,7 @@ func (m *model) View() string {
 		chatView = lipgloss.NewStyle().Width(m.rightWidth()).MaxWidth(m.rightWidth()).
 			Height(m.chatHeight()).MaxHeight(m.chatHeight()).Render(m.lazygit.View())
 	}
-	right := []string{m.header(), border.Render(strings.Repeat("─", m.rightWidth())), chatView, m.status()}
+	right := []string{m.header(), border.Render(strings.Repeat("─", m.rightWidth())), chatView, "", m.status()}
 	if m.replying {
 		right = append(right, border.Render(strings.Repeat("─", m.rightWidth())), m.reply.View())
 	}
@@ -794,8 +801,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Usage: tmux-agents <path to main.sh>")
 		os.Exit(1)
 	}
-	if bg, ok := promptBackground(queryColors()); ok {
-		chat.PromptBackground = lipgloss.Color(bg)
+	if theme.Current.Name == theme.Terminal.Name {
+		if bg, ok := promptBackground(queryColors()); ok {
+			theme.Current.Prompt = bg
+		}
 	}
 	m := newDashboard(os.Args[1])
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())

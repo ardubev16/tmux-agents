@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/ardubev16/tmux-agents/internal/theme"
 	"github.com/ardubev16/tmux-agents/internal/transcript"
 
 	"github.com/charmbracelet/glamour"
@@ -21,15 +22,11 @@ import (
 	"github.com/muesli/termenv"
 )
 
-// PromptBackground is the background of the user's prompts: the palette's bright black unless the owner learns
-// a shade from the terminal's own colors.
-var PromptBackground lipgloss.TerminalColor = lipgloss.Color("8")
-
-// From the terminal's palette: tool calls in yellow, thoughts in italics, the detail's bar muted.
+// Tool names and the detail's bar in the theme's colors, thoughts in italics.
 var (
-	toolStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	thoughtStyle = lipgloss.NewStyle().Italic(true)
-	barStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	toolStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Tool))
+	thoughtStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Thought)).Italic(true)
+	barStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Border))
 )
 
 type cacheKey struct {
@@ -51,27 +48,36 @@ type Chat struct {
 	renderer              *glamour.TermRenderer
 }
 
-// ompStyle mirrors omp's colorful Markdown, from the terminal's ANSI palette: H1 magenta, H2 yellow,
-// H3-H6 blue, strong/emphasis magenta, inline code green, links cyan, muted rules and quote bars, prose
-// and plain code in the terminal's default foreground, headings without their `#` markers.
-func ompStyle() ansi.StyleConfig {
+// ompStyle mirrors omp's colorful Markdown in the theme's colors (for the terminal's palette: H1 magenta, H2
+// yellow, H3-H6 blue, strong/emphasis magenta, inline code green, links cyan, muted rules and quote bars), prose
+// in the terminal's default foreground, headings without their `#` markers.
+func ompStyle(t theme.Theme) ansi.StyleConfig {
 	s := styles.DarkStyleConfig
-	color := func(c string) *string { return &c }
+	color := func(c string) *string {
+		if c == "" {
+			return nil // the terminal's default
+		}
+		return &c
+	}
 	zero := uint(0)
 	s.Document.Margin = &zero
 	s.Document.Color = nil
 	s.Heading.Color = nil
 	for i, h := range []*ansi.StyleBlock{&s.H1, &s.H2, &s.H3, &s.H4, &s.H5, &s.H6} {
 		h.Prefix, h.Suffix, h.BackgroundColor = "", "", nil
-		h.Color = color([]string{"5", "3", "4", "4", "4", "4"}[i])
+		h.Color = color([]string{t.H1, t.H2, t.H3, t.H3, t.H3, t.H3}[i])
 	}
-	s.Strong.Color, s.Emph.Color = color("5"), color("5")
-	s.Code.Prefix, s.Code.Suffix, s.Code.BackgroundColor, s.Code.Color = "", "", nil, color("2")
-	s.Link.Color, s.LinkText.Color = color("6"), color("6")
-	s.BlockQuote.Color = color("8")
-	s.HorizontalRule.Color, s.HorizontalRule.Format = color("8"), "\n────────\n"
-	s.Item.Color, s.Enumeration.Color = color("6"), color("6")
+	s.Strong.Color, s.Emph.Color = color(t.Strong), color(t.Strong)
+	s.Code.Prefix, s.Code.Suffix, s.Code.BackgroundColor, s.Code.Color = "", "", nil, color(t.Code)
+	s.Link.Color, s.LinkText.Color = color(t.Link), color(t.Link)
+	s.BlockQuote.Color = color(t.Quote)
+	s.HorizontalRule.Color, s.HorizontalRule.Format = color(t.Rule), "\n────────\n"
+	s.Item.Color, s.Enumeration.Color = color(t.Bullet), color(t.Bullet)
 	s.CodeBlock.Color = nil
+	if t.Syntax != nil {
+		s.CodeBlock.Chroma = t.Syntax
+		return s
+	}
 	// Plain code and punctuation in light grays would come out as the palette's white, lighter than the text.
 	chroma := *s.CodeBlock.Chroma
 	chroma.Text.Color, chroma.Name.Color, chroma.Punctuation.Color, chroma.NameClass.Color = nil, nil, nil, nil
@@ -80,18 +86,24 @@ func ompStyle() ansi.StyleConfig {
 }
 
 func newRenderer(width int) *glamour.TermRenderer {
-	style := ompStyle()
-	// ANSI colors at most, so the terminal's colorscheme applies (NO_COLOR still turns them off).
-	profile := max(lipgloss.ColorProfile(), termenv.ANSI)
+	// The terminal's theme: ANSI colors at most, so its colorscheme applies (NO_COLOR still turns them off).
+	profile := lipgloss.ColorProfile()
+	if !theme.Current.Hex {
+		profile = max(profile, termenv.ANSI)
+	}
 	options := []glamour.TermRendererOption{
-		glamour.WithStyles(style),
+		glamour.WithStyles(ompStyle(theme.Current)),
 		glamour.WithColorProfile(profile),
 		// Glamour does not count blockquote and list prefixes against the wrap width; leave room for them
 		// so prose wraps at word boundaries instead of being hard-wrapped below.
 		glamour.WithWordWrap(max(1, width-4)),
 	}
-	if profile == termenv.ANSI {
-		options = append(options, glamour.WithChromaFormatter("terminal16")) // code highlighting too
+	// Code highlighting at the same depth.
+	switch profile {
+	case termenv.ANSI:
+		options = append(options, glamour.WithChromaFormatter("terminal16"))
+	case termenv.TrueColor:
+		options = append(options, glamour.WithChromaFormatter("terminal16m"))
 	}
 	r, err := glamour.NewTermRenderer(options...)
 	if err != nil {
@@ -140,7 +152,7 @@ func (c *Chat) renderLines(markdown string, width int) []string {
 
 // promptLines boxes a prompt as typed (no Markdown) on the prompt background, across the whole width.
 func (c *Chat) promptLines(text string) []string {
-	box := lipgloss.NewStyle().Background(PromptBackground).Padding(0, 1).Width(c.width)
+	box := lipgloss.NewStyle().Background(lipgloss.Color(theme.Current.Prompt)).Padding(0, 1).Width(c.width)
 	return strings.Split(box.Render(text), "\n")
 }
 

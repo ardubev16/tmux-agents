@@ -143,6 +143,9 @@ set -g @tmux_agents_worktree_command ''
 set -g @tmux_agents_key_dashboard 'O'
 set -g @tmux_agents_key_worktree 'W'
 
+# Dashboard colors: 'terminal' (your terminal's palette and colors) or 'gruvbox-dark' (omp's dark-gruvbox)
+set -g @tmux_agents_theme 'terminal'
+
 # Build the dashboard from this checkout with Go instead of downloading the release (for working on the plugin)
 set -g @tmux_agents_dashboard_build 'off'
 
