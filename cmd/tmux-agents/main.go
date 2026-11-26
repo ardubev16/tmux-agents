@@ -575,7 +575,6 @@ func (m *model) keysView() string {
 	for _, k := range keybindings {
 		tooltipHeight = max(tooltipHeight, lipgloss.Height(tooltip.Render(k.detail)))
 	}
-	detail := tooltip.Height(tooltipHeight).Render(keybindings[m.keysSel].detail)
 	// Border, title and separator take 4 rows; the tooltip as many as the longest one.
 	visible := max(1, min(len(keybindings), m.chatHeight()-4-tooltipHeight))
 	m.keysTop = max(min(m.keysTop, m.keysSel), m.keysSel-visible+1)
@@ -589,10 +588,14 @@ func (m *model) keysView() string {
 			style.Render("  "+k.short)
 		lines = append(lines, ansi.Truncate(line, inner, "…")+style.Render(strings.Repeat(" ", max(0, inner-ansi.StringWidth(line)))))
 	}
-	lines = append(lines, border.Render(strings.Repeat("─", inner)), detail)
+	if d := keybindings[m.keysSel].detail; d != "" {
+		lines = append(lines, border.Render(strings.Repeat("─", inner)), tooltip.Render(d))
+	}
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(theme.Current.Border)).
 		Padding(0, 1).Render(strings.Join(lines, "\n"))
-	return lipgloss.Place(m.rightWidth(), m.chatHeight(), lipgloss.Center, lipgloss.Center, box)
+	// Placed as if every key had a tooltip, so the box stays put when one shows or hides.
+	top := max(0, (m.chatHeight()-(visible+4+tooltipHeight))/2)
+	return lipgloss.Place(m.rightWidth(), m.chatHeight(), lipgloss.Center, lipgloss.Top, lipgloss.NewStyle().MarginTop(top).Render(box))
 }
 
 func (m *model) key(msg tea.KeyMsg) tea.Cmd {

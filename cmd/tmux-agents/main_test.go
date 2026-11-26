@@ -64,6 +64,11 @@ func TestQuestionMarkListsKeybindingsInAFixedBoxWithTooltips(t *testing.T) {
 		return -1
 	}
 	row := titleRow()
+	// No tooltip for an obvious key: the box ends right after the list.
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "close") || !strings.Contains(strings.SplitAfter(view, "q/esc")[1], "╰") ||
+		strings.Count(strings.Split(strings.SplitAfter(view, "q/esc")[1], "╰")[0], "\n") != 1 {
+		t.Errorf("an empty tooltip still shows:\n%s", view)
+	}
 	press(m, "j") // moves through the keys, not the agents
 	if !strings.Contains(ansi.Strip(m.View()), "Numbers follow the visible list") || titleRow() != row {
 		t.Errorf("1-9's tooltip missing or the box moved:\n%s", ansi.Strip(m.View()))
