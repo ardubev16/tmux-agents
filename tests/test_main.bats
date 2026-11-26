@@ -22,18 +22,19 @@ EOF
     export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
 
-@test "list_agents: blocked, unread done, done, working; skips non-agents and panes back at the shell" {
-    printf '%s\t%s\t%s\t%s\t%s\t\t\t%s\t%s\n' \
-        %1 working s:1.0 omp /a '' 100 \
-        %2 "done" s:2.0 claude /b '' 100 \
-        %3 blocked s:3.0 claude /c '' 100 \
-        %4 "done" s:4.0 omp /d 1 100 \
-        %5 '' s:5.0 zsh /tmp '' '' \
-        %6 working s:6.0 zsh /tmp '' 100 >"$PANES"
+@test "list_agents: blocked, unread done, done or just opened, working; skips non-agents and panes back at the shell" {
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t\t%s\t%s\n' \
+        %1 working s:1.0 omp /a '' '' 100 \
+        %2 "done" s:2.0 claude /b '' '' 100 \
+        %3 blocked s:3.0 claude /c '' '' 100 \
+        %4 "done" s:4.0 omp /d '' 1 100 \
+        %5 '' s:5.0 zsh /tmp '' '' '' \
+        %6 working s:6.0 zsh /tmp '' '' 100 \
+        %7 '' s:7.0 omp /e /e.jsonl '' '' >"$PANES"
     run "$MAIN" list_agents
     [ "$status" -eq 0 ]
-    [ "$(cut -f1 <<<"$output" | tr '\n' ' ')" = "%3 %4 %2 %1 " ]
-    [ "$(cut -f9 <<<"$output" | sort -u)" = 100 ]
+    [ "$(cut -f1 <<<"$output" | tr '\n' ' ')" = "%3 %4 %2 %7 %1 " ]
+    [ "$(cut -f9 <<<"$output" | sort -u | tr '\n' ' ')" = " 100 " ]
 }
 
 @test "status_bar: only counters above 0 by default, every counter with hide_zero off" {

@@ -46,8 +46,8 @@ var (
 	border = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
-// Agent list sections, in list_agents' order; empty ones are not shown.
-var groups = map[string]string{"blocked": "Waiting", "done": "Idle", "working": "Running"}
+// Agent list sections, in list_agents' order; empty ones are not shown. No state: a session opened but not prompted.
+var groups = map[string]string{"blocked": "Waiting", "done": "Idle", "": "Idle", "working": "Running"}
 
 type agent struct {
 	pane, state, target, command, path, transcript, socket, unread, title string

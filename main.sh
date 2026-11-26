@@ -147,15 +147,16 @@ function seen() {
     tmux set-option -pu -t "$1" "$unread_option" 2>/dev/null || true
 }
 
-# One agent per line, blocked first, then unread done: pane_id \t state \t target \t command \t path \t
-# transcript \t socket \t unread \t since (epoch seconds the state began)
+# One agent per line (panes with a state, or a session reported but no prompt yet), blocked first, then unread
+# done, then idle: pane_id \t state \t target \t command \t path \t transcript \t socket \t unread \t since (epoch
+# seconds the state began)
 function list_agents() {
     local -r shell="$(basename "$(tmux show-option -gqv default-shell)")"
     # shortcut: an agent killed without its exit hook keeps its state until its pane is back at the shell prompt.
     tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}	#{$transcript_option}	#{$socket_option}	#{$unread_option}	#{$since_option}" |
         awk -F '\t' -v shell="$shell" '
-            BEGIN { OFS = "\t"; rank["blocked"] = 0; rank["done"] = 2; rank["working"] = 3 }
-            $2 != "" && $4 != shell {
+            BEGIN { OFS = "\t"; rank["blocked"] = 0; rank["done"] = 2; rank[""] = 2; rank["working"] = 3 }
+            ($2 != "" || $6 != "") && $4 != shell {
                 r = ($2 == "done" && $8 != "") ? 1 : rank[$2]
                 print r, $0
             }' |
