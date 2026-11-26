@@ -545,9 +545,9 @@ func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
 	return nil
 }
 
-// menuRow is one row of a menu: a right-aligned left column, a short description, and a tooltip shown below the
-// rows while the row is highlighted.
-type menuRow struct{ left, right, tooltip string }
+// menuRow is one row of a menu: a right-aligned left column, a short description, a gray note at the right edge,
+// and a tooltip shown below the rows while the row is highlighted.
+type menuRow struct{ left, right, note, tooltip string }
 
 // menu is a box in place of the chat, browsed with j/k: the keybindings, or a session's prompts.
 type menu struct {
@@ -560,19 +560,19 @@ type menu struct {
 // keybindings is what ? lists, with a tooltip for the keys that need more than their short description; the bar at
 // the bottom shows only the keys a vim user would not guess.
 var keybindings = []menuRow{
-	{"↑/k ↓/j", "previous/next agent", ""},
-	{"1-9", "agent by number", "Numbers follow the visible list: with a filter, they count the matching agents."},
-	{"n", "next needing you", "Highlights the next agent waiting for your input or finished while you were away, wrapping around. Each section lists the one waiting longest first."},
-	{"click", "highlight/expand", "In the list, highlights the agent. In the chat, expands or folds a thought or tool call to show all of it."},
-	{"enter", "switch to agent", ""},
-	{"ctrl+r", "reply", "Opens a reply box below the chat: enter sends it, ctrl+j adds a newline. For omp agents it starts from your half-typed prompt, and esc keeps what you wrote as that draft."},
-	{"p", "prompts", "Lists the prompts you sent in this session, oldest first, with when you sent each and how long the agent worked on it. enter scrolls the chat to it."},
-	{"/", "filter", "Fuzzy-filters the agents by name, pane or command. enter keeps the filter, esc clears it."},
-	{"tab", "lazygit", "Runs lazygit in the agent's folder in place of the chat. Keys and mouse go to it until you quit it."},
-	{"pgup/pgdn", "scroll chat", "The mouse wheel scrolls too. Scrolling to the top loads older messages."},
-	{"x x", "close agent", "Stops the agent like a normal exit (SIGTERM, so it saves its session) and closes its pane. The first x asks to confirm."},
-	{"?", "keybindings", ""},
-	{"q/esc", "close", ""},
+	{"↑/k ↓/j", "previous/next agent", "", ""},
+	{"1-9", "agent by number", "", "Numbers follow the visible list: with a filter, they count the matching agents."},
+	{"n", "next needing you", "", "Highlights the next agent waiting for your input or finished while you were away, wrapping around. Each section lists the one waiting longest first."},
+	{"click", "highlight/expand", "", "In the list, highlights the agent. In the chat, expands or folds a thought or tool call to show all of it."},
+	{"enter", "switch to agent", "", ""},
+	{"ctrl+r", "reply", "", "Opens a reply box below the chat: enter sends it, ctrl+j adds a newline. For omp agents it starts from your half-typed prompt, and esc keeps what you wrote as that draft."},
+	{"p", "prompts", "", "Lists the tasks you gave the agent in this session, oldest first: when you sent each and how long the agent worked on it. Prompts sent while it worked count toward the task it was on. enter scrolls the chat to it."},
+	{"/", "filter", "", "Fuzzy-filters the agents by name, pane or command. enter keeps the filter, esc clears it."},
+	{"tab", "lazygit", "", "Runs lazygit in the agent's folder in place of the chat. Keys and mouse go to it until you quit it."},
+	{"pgup/pgdn", "scroll chat", "", "The mouse wheel scrolls too. Scrolling to the top loads older messages."},
+	{"x x", "close agent", "", "Stops the agent like a normal exit (SIGTERM, so it saves its session) and closes its pane. The first x asks to confirm."},
+	{"?", "keybindings", "", ""},
+	{"q/esc", "close", "", ""},
 }
 
 const maxTooltip = 6 // rows; a longer tooltip (a long prompt) is cut, so the menu keeps room for its rows
@@ -581,12 +581,15 @@ const maxTooltip = 6 // rows; a longer tooltip (a long prompt) is cut, so the me
 // them. The box keeps its top in place whichever row is highlighted.
 func (m *model) menuView() string {
 	u := m.menu
-	leftWidth, inner := 0, 0
+	leftWidth, noteWidth, inner := 0, 0, 0
 	for _, r := range u.rows {
-		leftWidth = max(leftWidth, ansi.StringWidth(r.left))
+		leftWidth, noteWidth = max(leftWidth, ansi.StringWidth(r.left)), max(noteWidth, ansi.StringWidth(r.note))
+	}
+	if noteWidth > 0 {
+		noteWidth += 2 // its gap to the description
 	}
 	for _, r := range u.rows {
-		inner = max(inner, leftWidth+2+ansi.StringWidth(r.right))
+		inner = max(inner, leftWidth+2+ansi.StringWidth(r.right)+noteWidth)
 	}
 	inner = max(1, min(m.rightWidth()-4, max(inner, 50))) // inside the border and padding
 	tip := func(text string) string {
@@ -613,8 +616,9 @@ func (m *model) menuView() string {
 		}
 		line := style.Foreground(lipgloss.Color(theme.Current.Working)).Render(strings.Repeat(" ", leftWidth-ansi.StringWidth(r.left))+r.left) +
 			style.Render("  "+r.right)
-		line = ansi.Truncate(line, inner, "…")
-		lines = append(lines, line+style.Render(strings.Repeat(" ", max(0, inner-ansi.StringWidth(line)))))
+		line = ansi.Truncate(line, max(0, inner-noteWidth), "…")
+		line += style.Render(strings.Repeat(" ", max(0, inner-noteWidth-ansi.StringWidth(line))))
+		lines = append(lines, line+style.Faint(true).Render(fmt.Sprintf("%*s", noteWidth, r.note)))
 	}
 	if t := u.rows[u.sel].tooltip; t != "" {
 		lines = append(lines, border.Render(strings.Repeat("─", inner)), tip(t))
@@ -626,7 +630,10 @@ func (m *model) menuView() string {
 	return lipgloss.Place(m.rightWidth(), m.chatHeight(), lipgloss.Center, lipgloss.Top, lipgloss.NewStyle().MarginTop(top).Render(box))
 }
 
-// openPrompts lists the prompts of the highlighted agent's session; enter scrolls the chat to one.
+// queuedGap: a prompt this soon after the agent's last reply was queued while it worked, not typed after it ended.
+const queuedGap = 2 * time.Second
+
+// openPrompts lists the tasks you gave the highlighted agent in its session; enter scrolls the chat to one.
 func (m *model) openPrompts() {
 	a := m.agent()
 	if a == nil || a.transcript == "" {
@@ -635,22 +642,31 @@ func (m *model) openPrompts() {
 	}
 	// shortcut: parses the whole session file (not rendered); fine at tens of MB, page it if that gets slow.
 	all, _ := m.transcript(a.transcript).Blocks(1 << 30)
-	var prompts []int // indexes into all
+	// A prompt starts a task unless it was sent while the agent worked: steering it mid-run (it follows a step), or
+	// queued and delivered as the run ended.
+	var tasks []int // indexes into all
 	for i, b := range all {
-		if b.Prompt {
-			prompts = append(prompts, i)
+		if !b.Prompt {
+			continue
 		}
+		if len(tasks) > 0 {
+			prev := all[i-1]
+			if prev.Icon != "" || (!prev.Time.IsZero() && !b.Time.IsZero() && b.Time.Sub(prev.Time) < queuedGap) {
+				continue
+			}
+		}
+		tasks = append(tasks, i)
 	}
-	if len(prompts) == 0 {
+	if len(tasks) == 0 {
 		m.notice = "no prompts in this session yet"
 		return
 	}
-	now, rows := time.Now(), make([]menuRow, len(prompts))
-	for n, i := range prompts {
+	now, rows := time.Now(), make([]menuRow, len(tasks))
+	for n, i := range tasks {
 		start, took := all[i].Time, ""
 		switch {
-		case n+1 < len(prompts):
-			took = span(all[prompts[n+1]].Time.Sub(start))
+		case n+1 < len(tasks):
+			took = span(all[tasks[n+1]].Time.Sub(start))
 		case a.state == "working":
 			took = "running"
 		default:
@@ -662,14 +678,14 @@ func (m *model) openPrompts() {
 		}
 		text := strings.TrimSpace(all[i].Markdown)
 		first, _, _ := strings.Cut(text, "\n")
-		rows[n] = menuRow{when + " · " + took, first, text}
+		rows[n] = menuRow{when, first, took, text}
 	}
 	pane := a.pane
 	m.menu = &menu{title: "Prompts", rows: rows, sel: len(rows) - 1, pick: func(n int) {
 		// Load blocks back to the prompt, then put it at the top of the chat.
 		for m.agent() != nil && m.agent().pane == pane {
 			m.pollChat(true)
-			if m.chat.ScrollTo(all[prompts[n]].Key) || !m.chat.More {
+			if m.chat.ScrollTo(all[tasks[n]].Key) || !m.chat.More {
 				return
 			}
 			m.wanted += chatBlocks

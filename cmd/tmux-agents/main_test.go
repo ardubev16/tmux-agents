@@ -90,34 +90,44 @@ func TestQuestionMarkListsKeybindingsInAFixedBoxWithTooltips(t *testing.T) {
 	}
 }
 
-func TestPromptsListsTheSessionsPromptsAndJumpsToOne(t *testing.T) {
+func TestPromptsListsTasksAndJumpsToOne(t *testing.T) {
 	m, _, _ := newModel(t, "")
 	t0 := time.Now().Add(-2 * time.Hour).UTC()
-	stamp := func(d time.Duration) string { return t0.Add(d).Format(time.RFC3339Nano) }
 	var b strings.Builder
-	line := func(id, parent, role, text string, at time.Duration) {
-		e, _ := json.Marshal(map[string]any{"type": "message", "id": id, "parentId": parent, "timestamp": stamp(at),
-			"message": map[string]any{"role": role, "content": []any{map[string]any{"type": "text", "text": text}}}})
+	line := func(id, parent, role string, at time.Duration, part map[string]any) {
+		e, _ := json.Marshal(map[string]any{"type": "message", "id": id, "parentId": parent, "timestamp": t0.Add(at).Format(time.RFC3339Nano),
+			"message": map[string]any{"role": role, "content": []any{part}}})
 		b.Write(append(e, '\n'))
 	}
-	line("p1", "", "user", "first task\nwith details", 0)
-	parent := "p1"
+	text := func(s string) map[string]any { return map[string]any{"type": "text", "text": s} }
+	line("p1", "", "user", 0, text("first task\nwith details"))
+	line("c1", "p1", "assistant", time.Minute, map[string]any{"type": "toolCall", "id": "c1", "name": "bash", "arguments": map[string]any{"command": "ls"}})
+	line("s1", "c1", "user", 2*time.Minute, text("steering it mid-run")) // follows a step: part of the first task
+	parent := "s1"
 	for i := range 2 * chatBlocks { // pushes the first prompt out of what the chat loads at first
 		id := fmt.Sprint("a", i)
-		line(id, parent, "assistant", fmt.Sprint("answer ", i), time.Minute)
+		line(id, parent, "assistant", 3*time.Minute, text(fmt.Sprint("answer ", i)))
 		parent = id
 	}
-	line("p2", parent, "user", "second task", 10*time.Minute)
-	line("r2", "p2", "assistant", "done", 25*time.Minute)
+	line("p2", parent, "user", 10*time.Minute, text("second task"))
+	line("r2", "p2", "assistant", 25*time.Minute, text("done"))
+	line("q2", "r2", "user", 25*time.Minute+time.Second/2, text("queued while it worked")) // delivered as it ended
+	line("r3", "q2", "assistant", 30*time.Minute, text("done too"))
 	session := filepath.Join(t.TempDir(), "s.jsonl")
 	os.WriteFile(session, []byte(b.String()), 0o644)
 	m.agents[2].transcript, m.agents[2].state = session, "done"
 	press(m, "3", "p")
 
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"2h ago · 10m  first task", "1h ago · 15m  second task"} {
+	for _, want := range []string{"Prompts  2/2", "2h ago  first task", "1h ago  second task"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("prompts list lacks %q:\n%s", want, view)
+		}
+	}
+	for _, row := range []string{"first task", "second task"} { // how long each took, at the right edge
+		took := map[string]string{"first task": "10m", "second task": "20m"}[row]
+		if line := view[strings.Index(view, row):]; !strings.HasSuffix(strings.TrimRight(line[:strings.Index(line, "\n")], " │"), took) {
+			t.Errorf("the %s row does not end with %s:\n%s", row, took, view)
 		}
 	}
 	press(m, "k", "enter")
