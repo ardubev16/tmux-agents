@@ -17,6 +17,7 @@ type Theme struct {
 	Done, Working, Blocked string // the agent list, as the status bar counters
 	Border, Selected       string // rules and the highlighted agent's background
 	Tool, Thought, Prompt  string // tool names, thoughts, the background of the user's prompts
+	Muted                  string // what a tool call is about
 
 	// Markdown: headings (H1, H2, H3-H6), bold and italics, inline code, links, quotes, rules, list bullets.
 	H1, H2, H3, Strong, Code, Link, Quote, Rule, Bullet string
@@ -28,7 +29,7 @@ var Terminal = Theme{
 	Name: "terminal",
 	Done: "2", Working: "3", Blocked: "1",
 	Border: "8", Selected: "8",
-	Tool: "3", Thought: "", Prompt: "8",
+	Tool: "3", Thought: "", Prompt: "8", Muted: "8",
 	H1: "5", H2: "3", H3: "4", Strong: "5", Code: "2", Link: "6", Quote: "8", Rule: "8", Bullet: "6",
 }
 
@@ -44,7 +45,7 @@ var GruvboxDark = func() Theme {
 		Name: "gruvbox-dark", Hex: true,
 		Done: green, Working: yellow, Blocked: red,
 		Border: bg2, Selected: bg1,
-		Tool: neutralOrange, Thought: gray, Prompt: bgDim,
+		Tool: neutralOrange, Thought: gray, Prompt: bgDim, Muted: gray,
 		H1: yellow, H2: yellow, H3: yellow, Strong: "", Code: purple, Link: aqua, Quote: gray, Rule: bg2, Bullet: orange,
 		Syntax: &ansi.Chroma{
 			Text: c(fg1), Comment: c(gray), CommentPreproc: c(aqua),

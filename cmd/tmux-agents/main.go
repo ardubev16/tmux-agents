@@ -701,11 +701,14 @@ func (m *model) header() string {
 	if a == nil {
 		return ""
 	}
-	head := bold.Render(name(*a)) + "  " + dim.Render(details(*a))
+	// The git summary at the right edge; the name and details give way to it.
+	changes := ""
 	if m.changes != "" {
-		head += "  " + busy.Render(m.changes)
+		changes = "  " + busy.Render(m.changes)
 	}
-	return ansi.Truncate(head, m.rightWidth(), "…")
+	width := m.rightWidth() - ansi.StringWidth(changes)
+	head := ansi.Truncate(bold.Render(name(*a))+"  "+dim.Render(details(*a)), width, "…")
+	return head + strings.Repeat(" ", max(0, width-ansi.StringWidth(head))) + changes
 }
 
 func (m *model) status() string {

@@ -25,6 +25,7 @@ import (
 // Tool names and the detail's bar in the theme's colors, thoughts in italics.
 var (
 	toolStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Tool))
+	mutedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Muted))
 	thoughtStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Thought)).Italic(true)
 	barStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Border))
 )
@@ -159,7 +160,7 @@ func (c *Chat) promptLines(text string) []string {
 func (c *Chat) stepLine(b transcript.Block) string {
 	line := b.Icon + " " + thoughtStyle.Render(b.Summary)
 	if b.Name != "" {
-		line = toolStyle.Render(b.Icon+" "+b.Name) + " " + b.Summary
+		line = toolStyle.Render(b.Icon+" "+b.Name) + " " + mutedStyle.Render(b.Summary)
 	}
 	return xansi.Truncate(line, c.width, "…")
 }
