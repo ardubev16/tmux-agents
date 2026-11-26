@@ -59,24 +59,66 @@ var (
 // Agent list sections, in list_agents' order; empty ones are not shown. No state: a session opened but not prompted.
 var groups = map[string]string{"blocked": "Waiting", "done": "Idle", "": "Idle", "working": "Running"}
 
-// Distinct 256-color hues for project names; the list's projects take them in order.
+// Distinct 256-color hues for project names.
 var palette = []lipgloss.Color{"39", "208", "170", "43", "148", "141"}
 
-// projectColors gives each project (a repo and its worktrees) of the agents its own color, as long as there are
-// enough. Sorted, so a project keeps its color while the set of projects stays the same.
-func projectColors(agents []agent) map[string]lipgloss.Color {
-	var projects []string
-	for _, a := range agents {
-		if !slices.Contains(projects, a.project) {
-			projects = append(projects, a.project)
+// Each project (a repo and its worktrees) keeps the color it got first, saved in a file so it stays the same in
+// every dashboard and across restarts.
+var projectColors struct {
+	sync.Mutex
+	byProject map[string]int // index into palette; nil until read from the file
+}
+
+var projectColorsFile = func() string {
+	dir, _ := os.UserCacheDir()
+	return filepath.Join(dir, "tmux-agents", "project-colors")
+}()
+
+// assignColors sets each agent's color: its project's, or for a new project the one fewest listed projects have.
+func assignColors(agents []agent) {
+	pc := &projectColors
+	pc.Lock()
+	defer pc.Unlock()
+	if pc.byProject == nil {
+		pc.byProject = map[string]int{}
+		data, _ := os.ReadFile(projectColorsFile) // missing: no project has a color yet
+		for _, line := range strings.Split(string(data), "\n") {
+			if p, i, ok := strings.Cut(line, "\t"); ok {
+				if n, err := strconv.Atoi(i); err == nil && n >= 0 && n < len(palette) {
+					pc.byProject[p] = n
+				}
+			}
 		}
 	}
-	slices.Sort(projects)
-	colors := map[string]lipgloss.Color{}
-	for i, p := range projects {
-		colors[p] = palette[i%len(palette)]
+	used, counted := make([]int, len(palette)), map[string]bool{}
+	for _, a := range agents {
+		if c, ok := pc.byProject[a.project]; ok && !counted[a.project] {
+			used[c]++
+			counted[a.project] = true
+		}
 	}
-	return colors
+	var added strings.Builder
+	for i := range agents {
+		p := agents[i].project
+		c, ok := pc.byProject[p]
+		if !ok {
+			c = slices.Index(used, slices.Min(used))
+			used[c]++
+			pc.byProject[p] = c
+			fmt.Fprintf(&added, "%s\t%d\n", p, c)
+		}
+		agents[i].color = palette[c]
+	}
+	if added.Len() > 0 {
+		// Unsaved, a new project just gets a color again next time.
+		path := projectColorsFile
+		if os.MkdirAll(filepath.Dir(path), 0o755) == nil {
+			if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+				_, _ = f.WriteString(added.String())
+				_ = f.Close()
+			}
+		}
+	}
 }
 
 var projects sync.Map // folder -> its project, so git runs once per folder
@@ -108,7 +150,8 @@ func idleColor(idle time.Duration) lipgloss.Color {
 
 type agent struct {
 	pane, state, target, command, path, transcript, socket, unread, title, project string
-	since                                                                          int64 // epoch seconds the state began, 0 = unknown
+	since                                                                          int64          // epoch seconds the state began, 0 = unknown
+	color                                                                          lipgloss.Color // its project's
 }
 
 // A blocked agent shows a dialog, so a reply answers it instead of touching the draft.
@@ -206,6 +249,7 @@ func loadAgents(mainSh string) []agent {
 		}
 		agents = append(agents, a)
 	}
+	assignColors(agents)
 	return agents
 }
 
@@ -506,6 +550,11 @@ func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 			m.selected++
 			m.agentChanged()
 		}
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		if i := int(msg.String()[0] - '1'); i < len(m.agents) {
+			m.selected = i
+			m.agentChanged()
+		}
 	case "pgup":
 		m.scrollChat(-max(1, m.chatHeight()/2))
 	case "pgdown":
@@ -692,7 +741,7 @@ func (m *model) listRows() (rows []string, owners []int) {
 	if m.filtering || m.filter.Value() != "" {
 		rows, owners = append(rows, ansi.Truncate(" "+m.filter.View(), width, "…")), append(owners, -1)
 	}
-	now, colors := time.Now(), projectColors(m.all) // all, so the filter does not shift colors
+	now := time.Now()
 	for i, a := range m.agents {
 		if g := groups[a.state]; g != group {
 			group = g
@@ -725,11 +774,15 @@ func (m *model) listRows() (rows []string, owners []int) {
 		default:
 			since = base.Foreground(idleColor(now.Sub(time.Unix(a.since, 0)))).Render(ago(a.since, now) + " ")
 		}
-		first := base.Render(" ") + color.Render(icon) + base.Render(" ") + base.Bold(true).Render(name(a)) + color.Render(note)
+		number := " " // keys 1-9 highlight the first nine
+		if i < 9 {
+			number = fmt.Sprint(i + 1)
+		}
+		first := base.Faint(true).Render(number) + base.Render(" ") + color.Render(icon) + base.Render(" ") + base.Bold(true).Render(name(a)) + color.Render(note)
 		first = ansi.Truncate(first, max(0, width-ansi.StringWidth(since)), base.Render("…"))
 		first += base.Render(strings.Repeat(" ", max(0, width-ansi.StringWidth(first)-ansi.StringWidth(since)))) + since
 		// The project name in its color picks out the agents working on the same one.
-		second := base.Render("   ") + base.Foreground(colors[a.project]).Render(filepath.Base(a.project)) + base.Faint(true).Render(" · "+details(a))
+		second := base.Render("    ") + base.Foreground(a.color).Render(filepath.Base(a.project)) + base.Faint(true).Render(" · "+details(a))
 		lines := []string{first, second}
 		for _, line := range lines {
 			line = ansi.Truncate(line, width, base.Render("…"))
@@ -835,7 +888,7 @@ func (m *model) View() string {
 	}
 	sep := border.Render(strings.Repeat("│\n", body-1) + "│")
 	main := lipgloss.JoinHorizontal(lipgloss.Top, list, sep, " ", strings.Join(right, "\n"))
-	help := "↑↓ select · ⏎ switch · ^r reply · / filter · tab lazygit · pgup/pgdn scroll · click a step to expand it · x close agent · q/esc close"
+	help := "↑↓/1-9 select · ⏎ switch · ^r reply · / filter · tab lazygit · pgup/pgdn scroll · click a step to expand it · x close agent · q/esc close"
 	switch {
 	case m.lazygit != nil:
 		help = "keys go to lazygit · quit it (q) to return to the chat"

@@ -16,6 +16,41 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// TestMain keeps the project colors file out of the user's cache.
+func TestMain(m *testing.M) {
+	dir, _ := os.MkdirTemp("", "ta-cache")
+	projectColorsFile = filepath.Join(dir, "project-colors")
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+func TestProjectsKeepTheirColor(t *testing.T) {
+	agents := []agent{{project: "/r/a"}, {project: "/r/b"}, {project: "/r/a"}}
+	assignColors(agents)
+	if agents[0].color == agents[1].color || agents[0].color != agents[2].color {
+		t.Fatalf("colors %q, want a and b apart, both a agents alike", []any{agents[0].color, agents[1].color, agents[2].color})
+	}
+	projectColors.byProject = nil // a new dashboard, with a alone in the list: b still keeps its color
+	again := []agent{{project: "/r/b"}}
+	assignColors(again)
+	if again[0].color != agents[1].color {
+		t.Errorf("b got %q, before %q", again[0].color, agents[1].color)
+	}
+}
+
+func TestNumbersHighlightAgents(t *testing.T) {
+	m, _, _ := newModel(t, "")
+	press(m, "3")
+	if a := m.agent(); a == nil || a.pane != "%3" {
+		t.Errorf("3 highlighted %+v, want the third agent", a)
+	}
+	press(m, "9") // past the end: stays
+	if a := m.agent(); a == nil || a.pane != "%3" {
+		t.Errorf("9 highlighted %+v", a)
+	}
+}
+
 // fakeAgent is the omp integration's socket: it serves a draft and pushes live snapshots.
 type fakeAgent struct {
 	draft string
