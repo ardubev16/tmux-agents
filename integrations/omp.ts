@@ -19,7 +19,15 @@ type Pi = { on(event: string, handler: (event: Event, ctx: Ctx) => void): void }
 // queued: prompts submitted while the agent runs; omp writes them to the session file only when it delivers them.
 type Live = { text: string; thinking: boolean; tool: string; streaming: boolean; queued: string[] };
 // One per process, kept on globalThis so an extension reload keeps the socket and its subscribers.
-type Shared = { ctx?: Ctx; live: Live; running: boolean; subscribers: Set<Socket>; socketPath: string; file?: string };
+type Shared = {
+  ctx?: Ctx;
+  live: Live;
+  running: boolean;
+  subscribers: Set<Socket>;
+  socketPath: string;
+  file?: string;
+  watch?: NodeJS.Timeout;
+};
 
 export default function (pi: Pi): void {
   if (!process.env.TMUX_PANE) return;
@@ -50,11 +58,18 @@ export default function (pi: Pi): void {
     if (shared.file) run("session", shared.file, shared.socketPath);
   };
 
+  // /move relocates the session file without any event to extensions: notice the path changing.
+  clearInterval(shared.watch);
+  shared.watch = setInterval(() => {
+    try {
+      if (shared.ctx && shared.ctx.sessionManager?.getSessionFile?.() !== shared.file) report(shared.ctx);
+    } catch {}
+  }, 1000);
+  shared.watch.unref();
+
   on("session_start", (_, c) => report(c));
   on("session_switch", (_, c) => report(c));
   on("agent_start", (_, c) => {
-    // /move relocates the session file without a session event: pick up the new path on the next turn.
-    if (c.sessionManager?.getSessionFile?.() !== shared.file) report(c);
     shared.ctx = c;
     shared.running = true;
     run("state", "working");
