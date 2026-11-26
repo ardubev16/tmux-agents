@@ -548,6 +548,7 @@ type keybinding struct{ key, short, detail string }
 var keybindings = []keybinding{
 	{"↑/k ↓/j", "previous/next agent", ""},
 	{"1-9", "agent by number", "Numbers follow the visible list: with a filter, they count the matching agents."},
+	{"n", "next needing you", "Highlights the next agent waiting for your input or finished while you were away, wrapping around. Each section lists the one waiting longest first."},
 	{"click", "highlight/expand", "In the list, highlights the agent. In the chat, expands or folds a thought or tool call to show all of it."},
 	{"enter", "switch to agent", ""},
 	{"ctrl+r", "reply", "Opens a reply box below the chat: enter sends it, ctrl+j adds a newline. For omp agents it starts from your half-typed prompt, and esc keeps what you wrote as that draft."},
@@ -632,6 +633,16 @@ func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 		m.scrollChat(-max(1, m.chatHeight()/2))
 	case "pgdown":
 		m.scrollChat(max(1, m.chatHeight()/2))
+	case "n":
+		for step := 1; step <= len(m.agents); step++ {
+			i := (m.selected + step) % len(m.agents)
+			if a := m.agents[i]; a.state == "blocked" || (a.state == "done" && a.unread != "") {
+				m.selected = i
+				m.agentChanged()
+				return nil
+			}
+		}
+		m.notice = "no agent needs you"
 	case "enter":
 		if a := m.agent(); a != nil {
 			m.main("switch_agent", a.pane)
@@ -841,10 +852,10 @@ func (m *model) listRows() (rows []string, owners []int) {
 			icon, note = "●", " finished"
 		}
 		color := base.Foreground(style.color)
-		// How long the agent has been running or (colored by how long) idle, at the right edge.
+		// How long the agent has been running, or (colored by how long) waiting for you or idle, at the right edge.
 		since := ""
 		switch {
-		case a.since == 0 || a.state == "blocked":
+		case a.since == 0:
 		case a.state == "working":
 			since = base.Faint(true).Render(ago(a.since, now) + " ")
 		default:
@@ -967,7 +978,7 @@ func (m *model) View() string {
 	}
 	sep := border.Render(strings.Repeat("│\n", body-1) + "│")
 	main := lipgloss.JoinHorizontal(lipgloss.Top, list, sep, " ", strings.Join(right, "\n"))
-	help := "⏎ switch · ^r reply · tab lazygit · x close agent · ? keybindings"
+	help := "⏎ switch · n next needing you · ^r reply · tab lazygit · x close agent · ? keybindings"
 	switch {
 	case m.lazygit != nil:
 		help = "keys go to lazygit · quit it (q) to return to the chat"

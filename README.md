@@ -75,9 +75,10 @@ instead. (omp's own notifications only get through tmux from hidden panes with `
 
 ### Dashboard (`prefix + O`)
 
-Agents are on the left, named after their session, in three sections: **Waiting** for your input, **Idle** (with
-how long, turning from green to yellow after 15 minutes and red after an hour), and **Running** (with how long
-they have been running). Idle agents that finished while you were away are marked **finished** until you visit
+Agents are on the left, named after their session, in three sections: **Waiting** for your input, **Idle**, and
+**Running**, each with the one longest in that state first. Waiting and idle agents show how long, turning from green
+to yellow after 15 minutes and red after an hour; running ones how long they have been running. Idle agents that
+finished while you were away are marked **finished** (and listed first among the idle) until you visit
 their pane. The project name (a repo and its worktrees) is in its color, which stays the same, so agents working
 on the same project stand out. The agent of the pane you opened the dashboard from is highlighted.
 
@@ -92,6 +93,7 @@ header shows the agent's uncommitted changes to tracked files (`3 files +40 −1
 | Key | Action |
 | --- | --- |
 | `↑`/`↓`, `1`-`9`, click | Highlight an agent (the numbers pick one of the first nine) |
+| `n` | Highlight the next agent waiting for you or finished while you were away |
 | `Enter` | Switch to the agent's pane |
 | `Ctrl-r` | Reply (see below) |
 | `/` | Fuzzy-filter the list by name, pane or command; `Enter` keeps the filter, `Esc` clears it |

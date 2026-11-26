@@ -232,12 +232,24 @@ func TestListIsGroupedAndShowsNamesAndWhatNeedsYou(t *testing.T) {
 			t.Fatalf("rows %q, want %q", lines, want)
 		}
 	}
-	if !strings.HasSuffix(lines[4], " 3m") || !strings.HasSuffix(lines[7], " 2h") || strings.HasSuffix(lines[1], "m") {
-		t.Errorf("running and idle agents show how long, blocked ones do not: %q", lines)
+	if !strings.HasSuffix(lines[1], " 3m") || !strings.HasSuffix(lines[4], " 3m") || !strings.HasSuffix(lines[7], " 2h") {
+		t.Errorf("every agent shows how long it has been in its state: %q", lines)
 	}
 	m.agents = m.agents[:1] // no running or idle agents: no empty sections
 	if rows, _ := m.listRows(); len(rows) != 3 {
 		t.Errorf("rows %q", rows)
+	}
+}
+
+func TestNJumpsToTheNextAgentNeedingYou(t *testing.T) {
+	m, _, _ := newModel(t, "") // %1 blocked, %2 working, %3 finished unread
+	press(m, "n")
+	if a := m.agent(); a == nil || a.pane != "%3" {
+		t.Fatalf("n highlighted %+v, want %%3 (skipping the running %%2)", a)
+	}
+	press(m, "n") // wraps around
+	if a := m.agent(); a == nil || a.pane != "%1" {
+		t.Errorf("n highlighted %+v, want %%1", a)
 	}
 }
 
