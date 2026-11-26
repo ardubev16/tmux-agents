@@ -543,24 +543,24 @@ func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
 
 type keybinding struct{ key, short, detail string }
 
-// keybindings is what ? lists, with each key's detail below the list; the bar at the bottom shows only the keys a
-// vim user would not guess.
+// keybindings is what ? lists, with a tooltip for the keys that need more than their short description; the bar at
+// the bottom shows only the keys a vim user would not guess.
 var keybindings = []keybinding{
-	{"↑/k ↓/j", "previous/next agent", "Highlights the agent above or below; the chat on the right follows it."},
-	{"1-9", "agent by number", "Highlights the agent with that number. Numbers follow the visible list: with a filter, they count the matching agents."},
+	{"↑/k ↓/j", "previous/next agent", ""},
+	{"1-9", "agent by number", "Numbers follow the visible list: with a filter, they count the matching agents."},
 	{"click", "highlight/expand", "In the list, highlights the agent. In the chat, expands or folds a thought or tool call to show all of it."},
-	{"enter", "switch to agent", "Closes the dashboard and switches to the highlighted agent's pane."},
+	{"enter", "switch to agent", ""},
 	{"ctrl+r", "reply", "Opens a reply box below the chat: enter sends it, ctrl+j adds a newline. For omp agents it starts from your half-typed prompt, and esc keeps what you wrote as that draft."},
 	{"/", "filter", "Fuzzy-filters the agents by name, pane or command. enter keeps the filter, esc clears it."},
 	{"tab", "lazygit", "Runs lazygit in the agent's folder in place of the chat. Keys and mouse go to it until you quit it."},
-	{"pgup/pgdn", "scroll chat", "Scrolls the chat by half a page, as does the mouse wheel. Scrolling to the top loads older messages."},
+	{"pgup/pgdn", "scroll chat", "The mouse wheel scrolls too. Scrolling to the top loads older messages."},
 	{"x x", "close agent", "Stops the agent like a normal exit (SIGTERM, so it saves its session) and closes its pane. The first x asks to confirm."},
-	{"?", "keybindings", "Shows or hides this list; j/k move through it."},
-	{"q/esc", "close", "Closes the dashboard. With a filter set, esc clears the filter first."},
+	{"?", "keybindings", ""},
+	{"q/esc", "close", ""},
 }
 
 // keysView is the ? panel: the keys with a short description, scrolled to keep the highlighted one in view, and
-// the highlighted key's detail below them.
+// the highlighted key's tooltip below them. Its size stays the same whichever key is highlighted.
 func (m *model) keysView() string {
 	keyWidth, inner := 0, 0
 	for _, k := range keybindings {
@@ -570,9 +570,14 @@ func (m *model) keysView() string {
 		inner = max(inner, keyWidth+2+ansi.StringWidth(k.short))
 	}
 	inner = max(1, min(m.rightWidth()-4, max(inner, 50))) // inside the border and padding
-	detail := lipgloss.NewStyle().Width(inner).Render(keybindings[m.keysSel].detail)
-	// Border, title and separator take 4 rows; the detail takes what it needs.
-	visible := max(1, min(len(keybindings), m.chatHeight()-4-lipgloss.Height(detail)))
+	tooltip := lipgloss.NewStyle().Width(inner)
+	tooltipHeight := 0
+	for _, k := range keybindings {
+		tooltipHeight = max(tooltipHeight, lipgloss.Height(tooltip.Render(k.detail)))
+	}
+	detail := tooltip.Height(tooltipHeight).Render(keybindings[m.keysSel].detail)
+	// Border, title and separator take 4 rows; the tooltip as many as the longest one.
+	visible := max(1, min(len(keybindings), m.chatHeight()-4-tooltipHeight))
 	m.keysTop = max(min(m.keysTop, m.keysSel), m.keysSel-visible+1)
 	lines := []string{bold.Render("Keybindings") + dim.Render(fmt.Sprintf("  %d/%d", m.keysSel+1, len(keybindings)))}
 	for i := m.keysTop; i < min(len(keybindings), m.keysTop+visible); i++ {

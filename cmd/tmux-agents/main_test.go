@@ -51,19 +51,34 @@ func TestNumbersHighlightAgents(t *testing.T) {
 	}
 }
 
-func TestQuestionMarkListsKeybindingsScrollingToTheHighlightedOne(t *testing.T) {
+func TestQuestionMarkListsKeybindingsInAFixedBoxWithTooltips(t *testing.T) {
 	m, _, _ := newModel(t, "")
-	m.Update(tea.WindowSizeMsg{Width: 100, Height: 14}) // too short for every key at once
 	press(m, "?")
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "previous/next agent") || !strings.Contains(view, "Highlights the agent above") {
-		t.Fatalf("? shows no keybindings with the first one's detail:\n%s", view)
+	titleRow := func() int {
+		for i, line := range strings.Split(ansi.Strip(m.View()), "\n") {
+			if strings.Contains(line, "Keybindings") {
+				return i
+			}
+		}
+		t.Fatalf("? shows no keybindings:\n%s", ansi.Strip(m.View()))
+		return -1
 	}
+	row := titleRow()
+	press(m, "j") // moves through the keys, not the agents
+	if !strings.Contains(ansi.Strip(m.View()), "Numbers follow the visible list") || titleRow() != row {
+		t.Errorf("1-9's tooltip missing or the box moved:\n%s", ansi.Strip(m.View()))
+	}
+	press(m, "j", "j", "j") // ctrl+r, the longest tooltip
+	if titleRow() != row {
+		t.Errorf("the box moved with a longer tooltip:\n%s", ansi.Strip(m.View()))
+	}
+
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 14}) // too short for every key at once
 	for range keybindings {
-		press(m, "j") // moves through the keys, not the agents
+		press(m, "j")
 	}
-	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "Closes the dashboard.") || strings.Contains(view, "previous/next agent") {
-		t.Errorf("not scrolled to the last key and its detail:\n%s", view)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "q/esc") || strings.Contains(view, "↑/k ↓/j") {
+		t.Errorf("not scrolled to the last key:\n%s", view)
 	}
 	if cmd := m.key(tea.KeyMsg{Type: tea.KeyEsc}); cmd != nil || m.keysOpen || m.selected != 0 {
 		t.Errorf("esc should close the panel, not the dashboard; selected %d", m.selected)
