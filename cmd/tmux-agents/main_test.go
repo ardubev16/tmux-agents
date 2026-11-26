@@ -85,8 +85,44 @@ func TestQuestionMarkListsKeybindingsInAFixedBoxWithTooltips(t *testing.T) {
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "q/esc") || strings.Contains(view, "↑/k ↓/j") {
 		t.Errorf("not scrolled to the last key:\n%s", view)
 	}
-	if cmd := m.key(tea.KeyMsg{Type: tea.KeyEsc}); cmd != nil || m.keysOpen || m.selected != 0 {
+	if cmd := m.key(tea.KeyMsg{Type: tea.KeyEsc}); cmd != nil || m.menu != nil || m.selected != 0 {
 		t.Errorf("esc should close the panel, not the dashboard; selected %d", m.selected)
+	}
+}
+
+func TestPromptsListsTheSessionsPromptsAndJumpsToOne(t *testing.T) {
+	m, _, _ := newModel(t, "")
+	t0 := time.Now().Add(-2 * time.Hour).UTC()
+	stamp := func(d time.Duration) string { return t0.Add(d).Format(time.RFC3339Nano) }
+	var b strings.Builder
+	line := func(id, parent, role, text string, at time.Duration) {
+		e, _ := json.Marshal(map[string]any{"type": "message", "id": id, "parentId": parent, "timestamp": stamp(at),
+			"message": map[string]any{"role": role, "content": []any{map[string]any{"type": "text", "text": text}}}})
+		b.Write(append(e, '\n'))
+	}
+	line("p1", "", "user", "first task\nwith details", 0)
+	parent := "p1"
+	for i := range 2 * chatBlocks { // pushes the first prompt out of what the chat loads at first
+		id := fmt.Sprint("a", i)
+		line(id, parent, "assistant", fmt.Sprint("answer ", i), time.Minute)
+		parent = id
+	}
+	line("p2", parent, "user", "second task", 10*time.Minute)
+	line("r2", "p2", "assistant", "done", 25*time.Minute)
+	session := filepath.Join(t.TempDir(), "s.jsonl")
+	os.WriteFile(session, []byte(b.String()), 0o644)
+	m.agents[2].transcript, m.agents[2].state = session, "done"
+	press(m, "3", "p")
+
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"2h ago · 10m  first task", "1h ago · 15m  second task"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("prompts list lacks %q:\n%s", want, view)
+		}
+	}
+	press(m, "k", "enter")
+	if m.menu != nil || !strings.HasPrefix(strings.TrimSpace(ansi.Strip(m.chat.View())), "first task") {
+		t.Errorf("enter did not put the first prompt at the top of the chat:\n%s", ansi.Strip(m.chat.View()))
 	}
 }
 

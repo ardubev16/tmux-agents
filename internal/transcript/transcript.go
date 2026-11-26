@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
@@ -33,7 +34,8 @@ type Block struct {
 	Markdown                    string
 	Prompt                      bool // Markdown is what the user typed, shown as typed
 	Icon, Name, Summary, Detail string
-	call, resultOf              string // tool call id: a result is a block of its own until attached to its call
+	Time                        time.Time // when the agent or user wrote it; zero if the file does not say
+	call, resultOf              string    // tool call id: a result is a block of its own until attached to its call
 }
 
 // ThinkingStep folds thoughts to their first line.
@@ -62,6 +64,7 @@ type entry struct {
 	ParentUUID  string `json:"parentUuid"`
 	IsMeta      bool   `json:"isMeta"`
 	IsSidechain bool   `json:"isSidechain"`
+	Timestamp   string `json:"timestamp"` // RFC 3339; a string, so an odd one only loses the time, not the entry
 	Message     *struct {
 		Role       string          `json:"role"`
 		Content    json.RawMessage `json:"content"`    // a string or a list of parts
@@ -345,6 +348,10 @@ func (e *entry) blocks() []Block {
 				out = append(out, Block{resultOf: p.ToolUseID, Detail: contentText(p.Content)})
 			}
 		}
+	}
+	at, _ := time.Parse(time.RFC3339Nano, e.Timestamp)
+	for i := range out {
+		out[i].Time = at
 	}
 	return out
 }

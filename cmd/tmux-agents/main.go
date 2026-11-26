@@ -203,8 +203,7 @@ type model struct {
 	replying bool
 	reply    textarea.Model
 
-	keysOpen         bool // the keybindings panel (?) shows in place of the chat
-	keysSel, keysTop int  // its highlighted key and first visible one
+	menu *menu // shown in place of the chat: the keybindings (?) or the session's prompts (p)
 
 	width, height int
 }
@@ -366,7 +365,7 @@ func (m *model) agentChanged() {
 		close(m.stop)
 		m.stop = nil
 	}
-	m.live, m.wanted = agentsocket.Live{}, chatBlocks
+	m.live, m.wanted, m.menu = agentsocket.Live{}, chatBlocks, nil
 	m.liveGen++
 	if a != nil && a.socket != "" {
 		m.stop = make(chan struct{})
@@ -398,12 +397,7 @@ func (m *model) pollChat(force bool) {
 	// Not nil: nil would keep the blocks shown before, i.e. the previously selected agent's chat.
 	blocks, more := []transcript.Block{}, false
 	if exists {
-		t, ok := m.transcripts[a.transcript]
-		if !ok {
-			t = transcript.New(a.transcript)
-			m.transcripts[a.transcript] = t
-		}
-		blocks, more = t.Blocks(m.wanted)
+		blocks, more = m.transcript(a.transcript).Blocks(m.wanted)
 	}
 	m.chat.Update(blocks, m.liveBlocks(), m.writing(), more)
 }
@@ -429,6 +423,16 @@ func (m *model) liveBlocks() []transcript.Block {
 func (m *model) writing() bool {
 	a := m.agent()
 	return a != nil && a.state == "working" && (a.socket == "" || m.live.Streaming || m.live.Tool != "")
+}
+
+// transcript is the session file at path, kept so each poll parses only what was appended.
+func (m *model) transcript(path string) *transcript.Transcript {
+	t, ok := m.transcripts[path]
+	if !ok {
+		t = transcript.New(path)
+		m.transcripts[path] = t
+	}
+	return t
 }
 
 func (m *model) scrollChat(delta int) {
@@ -541,17 +545,28 @@ func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
 	return nil
 }
 
-type keybinding struct{ key, short, detail string }
+// menuRow is one row of a menu: a right-aligned left column, a short description, and a tooltip shown below the
+// rows while the row is highlighted.
+type menuRow struct{ left, right, tooltip string }
+
+// menu is a box in place of the chat, browsed with j/k: the keybindings, or a session's prompts.
+type menu struct {
+	title    string
+	rows     []menuRow
+	sel, top int
+	pick     func(i int) // enter on row i; nil: enter does nothing
+}
 
 // keybindings is what ? lists, with a tooltip for the keys that need more than their short description; the bar at
 // the bottom shows only the keys a vim user would not guess.
-var keybindings = []keybinding{
+var keybindings = []menuRow{
 	{"↑/k ↓/j", "previous/next agent", ""},
 	{"1-9", "agent by number", "Numbers follow the visible list: with a filter, they count the matching agents."},
 	{"n", "next needing you", "Highlights the next agent waiting for your input or finished while you were away, wrapping around. Each section lists the one waiting longest first."},
 	{"click", "highlight/expand", "In the list, highlights the agent. In the chat, expands or folds a thought or tool call to show all of it."},
 	{"enter", "switch to agent", ""},
 	{"ctrl+r", "reply", "Opens a reply box below the chat: enter sends it, ctrl+j adds a newline. For omp agents it starts from your half-typed prompt, and esc keeps what you wrote as that draft."},
+	{"p", "prompts", "Lists the prompts you sent in this session, oldest first, with when you sent each and how long the agent worked on it. enter scrolls the chat to it."},
 	{"/", "filter", "Fuzzy-filters the agents by name, pane or command. enter keeps the filter, esc clears it."},
 	{"tab", "lazygit", "Runs lazygit in the agent's folder in place of the chat. Keys and mouse go to it until you quit it."},
 	{"pgup/pgdn", "scroll chat", "The mouse wheel scrolls too. Scrolling to the top loads older messages."},
@@ -560,60 +575,130 @@ var keybindings = []keybinding{
 	{"q/esc", "close", ""},
 }
 
-// keysView is the ? panel: the keys with a short description, scrolled to keep the highlighted one in view, and
-// the highlighted key's tooltip below them. Its size stays the same whichever key is highlighted.
-func (m *model) keysView() string {
-	keyWidth, inner := 0, 0
-	for _, k := range keybindings {
-		keyWidth = max(keyWidth, ansi.StringWidth(k.key))
+const maxTooltip = 6 // rows; a longer tooltip (a long prompt) is cut, so the menu keeps room for its rows
+
+// menuView renders m.menu: its rows scrolled to keep the highlighted one in view, and that row's tooltip below
+// them. The box keeps its top in place whichever row is highlighted.
+func (m *model) menuView() string {
+	u := m.menu
+	leftWidth, inner := 0, 0
+	for _, r := range u.rows {
+		leftWidth = max(leftWidth, ansi.StringWidth(r.left))
 	}
-	for _, k := range keybindings {
-		inner = max(inner, keyWidth+2+ansi.StringWidth(k.short))
+	for _, r := range u.rows {
+		inner = max(inner, leftWidth+2+ansi.StringWidth(r.right))
 	}
 	inner = max(1, min(m.rightWidth()-4, max(inner, 50))) // inside the border and padding
-	tooltip := lipgloss.NewStyle().Width(inner)
+	tip := func(text string) string {
+		lines := strings.Split(lipgloss.NewStyle().Width(inner).Render(text), "\n")
+		if len(lines) > maxTooltip {
+			lines = append(lines[:maxTooltip-1], dim.Render("…"))
+		}
+		return strings.Join(lines, "\n")
+	}
 	tooltipHeight := 0
-	for _, k := range keybindings {
-		tooltipHeight = max(tooltipHeight, lipgloss.Height(tooltip.Render(k.detail)))
+	for _, r := range u.rows {
+		if r.tooltip != "" {
+			tooltipHeight = max(tooltipHeight, lipgloss.Height(tip(r.tooltip)))
+		}
 	}
 	// Border, title and separator take 4 rows; the tooltip as many as the longest one.
-	visible := max(1, min(len(keybindings), m.chatHeight()-4-tooltipHeight))
-	m.keysTop = max(min(m.keysTop, m.keysSel), m.keysSel-visible+1)
-	lines := []string{bold.Render("Keybindings") + dim.Render(fmt.Sprintf("  %d/%d", m.keysSel+1, len(keybindings)))}
-	for i := m.keysTop; i < min(len(keybindings), m.keysTop+visible); i++ {
-		k, style := keybindings[i], lipgloss.NewStyle()
-		if i == m.keysSel {
+	visible := max(1, min(len(u.rows), m.chatHeight()-4-tooltipHeight))
+	u.top = max(min(u.top, u.sel), u.sel-visible+1)
+	lines := []string{bold.Render(u.title) + dim.Render(fmt.Sprintf("  %d/%d", u.sel+1, len(u.rows)))}
+	for i := u.top; i < min(len(u.rows), u.top+visible); i++ {
+		r, style := u.rows[i], lipgloss.NewStyle()
+		if i == u.sel {
 			style = style.Background(lipgloss.Color(theme.Current.Selected))
 		}
-		line := style.Foreground(lipgloss.Color(theme.Current.Working)).Render(strings.Repeat(" ", keyWidth-ansi.StringWidth(k.key))+k.key) +
-			style.Render("  "+k.short)
-		lines = append(lines, ansi.Truncate(line, inner, "…")+style.Render(strings.Repeat(" ", max(0, inner-ansi.StringWidth(line)))))
+		line := style.Foreground(lipgloss.Color(theme.Current.Working)).Render(strings.Repeat(" ", leftWidth-ansi.StringWidth(r.left))+r.left) +
+			style.Render("  "+r.right)
+		line = ansi.Truncate(line, inner, "…")
+		lines = append(lines, line+style.Render(strings.Repeat(" ", max(0, inner-ansi.StringWidth(line)))))
 	}
-	if d := keybindings[m.keysSel].detail; d != "" {
-		lines = append(lines, border.Render(strings.Repeat("─", inner)), tooltip.Render(d))
+	if t := u.rows[u.sel].tooltip; t != "" {
+		lines = append(lines, border.Render(strings.Repeat("─", inner)), tip(t))
 	}
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(theme.Current.Border)).
 		Padding(0, 1).Render(strings.Join(lines, "\n"))
-	// Placed as if every key had a tooltip, so the box stays put when one shows or hides.
+	// Placed as if every row had the longest tooltip, so the box stays put when one shows or hides.
 	top := max(0, (m.chatHeight()-(visible+4+tooltipHeight))/2)
 	return lipgloss.Place(m.rightWidth(), m.chatHeight(), lipgloss.Center, lipgloss.Top, lipgloss.NewStyle().MarginTop(top).Render(box))
 }
 
+// openPrompts lists the prompts of the highlighted agent's session; enter scrolls the chat to one.
+func (m *model) openPrompts() {
+	a := m.agent()
+	if a == nil || a.transcript == "" {
+		m.notice = "no session file to list prompts from"
+		return
+	}
+	// shortcut: parses the whole session file (not rendered); fine at tens of MB, page it if that gets slow.
+	all, _ := m.transcript(a.transcript).Blocks(1 << 30)
+	var prompts []int // indexes into all
+	for i, b := range all {
+		if b.Prompt {
+			prompts = append(prompts, i)
+		}
+	}
+	if len(prompts) == 0 {
+		m.notice = "no prompts in this session yet"
+		return
+	}
+	now, rows := time.Now(), make([]menuRow, len(prompts))
+	for n, i := range prompts {
+		start, took := all[i].Time, ""
+		switch {
+		case n+1 < len(prompts):
+			took = span(all[prompts[n+1]].Time.Sub(start))
+		case a.state == "working":
+			took = "running"
+		default:
+			took = span(all[len(all)-1].Time.Sub(start))
+		}
+		when := "?"
+		if !start.IsZero() {
+			when = span(now.Sub(start)) + " ago"
+		}
+		text := strings.TrimSpace(all[i].Markdown)
+		first, _, _ := strings.Cut(text, "\n")
+		rows[n] = menuRow{when + " · " + took, first, text}
+	}
+	pane := a.pane
+	m.menu = &menu{title: "Prompts", rows: rows, sel: len(rows) - 1, pick: func(n int) {
+		// Load blocks back to the prompt, then put it at the top of the chat.
+		for m.agent() != nil && m.agent().pane == pane {
+			m.pollChat(true)
+			if m.chat.ScrollTo(all[prompts[n]].Key) || !m.chat.More {
+				return
+			}
+			m.wanted += chatBlocks
+		}
+	}}
+}
+
 func (m *model) key(msg tea.KeyMsg) tea.Cmd {
-	if m.keysOpen {
+	if u := m.menu; u != nil {
 		switch msg.String() {
 		case "up", "k":
-			m.keysSel = max(0, m.keysSel-1)
+			u.sel = max(0, u.sel-1)
 		case "down", "j":
-			m.keysSel = min(len(keybindings)-1, m.keysSel+1)
+			u.sel = min(len(u.rows)-1, u.sel+1)
+		case "enter":
+			if u.pick != nil {
+				m.menu = nil
+				u.pick(u.sel)
+			}
 		case "?", "esc", "q":
-			m.keysOpen = false
+			m.menu = nil
 		}
 		return nil
 	}
 	switch msg.String() {
 	case "?":
-		m.keysOpen = true
+		m.menu = &menu{title: "Keybindings", rows: keybindings}
+	case "p":
+		m.openPrompts()
 	case "up", "k":
 		if m.selected > 0 {
 			m.selected--
@@ -805,8 +890,11 @@ func name(a agent) string {
 func details(a agent) string { return a.target + " · " + a.command }
 
 // ago is how long ago since (epoch seconds) was, in its largest unit: 45s, 12m, 3h, 2d.
-func ago(since int64, now time.Time) string {
-	d := max(0, now.Sub(time.Unix(since, 0)))
+func ago(since int64, now time.Time) string { return span(now.Sub(time.Unix(since, 0))) }
+
+// span is a duration in its largest unit: 45s, 12m, 3h, 2d.
+func span(d time.Duration) string {
+	d = max(0, d)
 	switch {
 	case d < time.Minute:
 		return fmt.Sprintf("%ds", d/time.Second)
@@ -969,8 +1057,8 @@ func (m *model) View() string {
 	case m.lazygit != nil:
 		chatView = lipgloss.NewStyle().Width(m.rightWidth()).MaxWidth(m.rightWidth()).
 			Height(m.chatHeight()).MaxHeight(m.chatHeight()).Render(m.lazygit.View())
-	case m.keysOpen:
-		chatView = m.keysView()
+	case m.menu != nil:
+		chatView = m.menuView()
 	}
 	right := []string{m.header(), border.Render(strings.Repeat("─", m.rightWidth())), chatView, "", m.status()}
 	if m.replying {
@@ -986,7 +1074,9 @@ func (m *model) View() string {
 		help = "⏎ send · ^j newline · esc keep as draft"
 	case m.filtering:
 		help = "type to fuzzy filter by name, pane or command · ⏎ keep · esc clear"
-	case m.keysOpen:
+	case m.menu != nil && m.menu.pick != nil:
+		help = "j/k move · ⏎ show in the chat · esc close"
+	case m.menu != nil:
 		help = "j/k move · esc close"
 	}
 	return main + "\n" + dim.Render(ansi.Truncate(help, m.width, "…"))

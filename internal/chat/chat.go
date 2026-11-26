@@ -274,6 +274,17 @@ func (c *Chat) AtTop() bool        { return c.offset == 0 && len(c.lines) > c.he
 func (c *Chat) Lines() []string    { return c.lines }
 func (c *Chat) Offset() int        { return c.offset }
 
+// ScrollTo puts the first line of the block with key at the top of the view; false if no such block is loaded.
+func (c *Chat) ScrollTo(key string) bool {
+	for line, owner := range c.owners {
+		if owner >= 0 && owner < len(c.Blocks) && c.Blocks[owner].Key == key {
+			c.offset = min(line, c.maxOffset())
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Chat) View() string {
 	end := min(c.offset+c.height, len(c.lines))
 	visible := c.lines[c.offset:end]
