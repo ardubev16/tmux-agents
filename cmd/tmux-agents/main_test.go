@@ -51,13 +51,20 @@ func TestNumbersHighlightAgents(t *testing.T) {
 	}
 }
 
-func TestQuestionMarkListsKeybindings(t *testing.T) {
+func TestQuestionMarkListsKeybindingsScrollingToTheHighlightedOne(t *testing.T) {
 	m, _, _ := newModel(t, "")
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 14}) // too short for every key at once
 	press(m, "?")
-	if !strings.Contains(ansi.Strip(m.View()), "Keybindings") {
-		t.Fatal("? shows no keybindings")
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "previous/next agent") || !strings.Contains(view, "Highlights the agent above") {
+		t.Fatalf("? shows no keybindings with the first one's detail:\n%s", view)
 	}
-	press(m, "j") // ignored while open
+	for range keybindings {
+		press(m, "j") // moves through the keys, not the agents
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Closes the dashboard.") || strings.Contains(view, "previous/next agent") {
+		t.Errorf("not scrolled to the last key and its detail:\n%s", view)
+	}
 	if cmd := m.key(tea.KeyMsg{Type: tea.KeyEsc}); cmd != nil || m.keysOpen || m.selected != 0 {
 		t.Errorf("esc should close the panel, not the dashboard; selected %d", m.selected)
 	}
