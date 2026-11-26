@@ -90,7 +90,7 @@ case "$1" in
 list_agents)
     printf '%%%%1\tblocked\ts:1.0\tclaude\t~/a\t\t\t\t%%s\n' "$(( $(date +%%s) - 180 ))"
     printf '%%%%2\tworking\ts:2.0\tomp\t%[4]s\t%[2]s\t%[3]s\t\t%%s\n' "$(( $(date +%%s) - 180 ))"
-    grep -q '^close_agent %%3' '%[1]s' || printf '%%%%3\tdone\ts:3.0\tomp\t~/c\t\t\t1\n' ;;
+    grep -q '^close_agent %%3' '%[1]s' || printf '%%%%3\tdone\ts:3.0\tomp\t~/c\t\t\t1\t%%s\n' "$(( $(date +%%s) - 7200 ))" ;;
 esac
 `, log, session, socket, dir)), 0o755)
 	return script, func() []string {
@@ -158,8 +158,8 @@ func TestListIsGroupedAndShowsNamesAndWhatNeedsYou(t *testing.T) {
 			t.Fatalf("rows %q, want %q", lines, want)
 		}
 	}
-	if !strings.HasSuffix(lines[3], " 3m") || strings.HasSuffix(lines[1], "m") {
-		t.Errorf("only running agents show how long: %q", lines)
+	if !strings.HasSuffix(lines[3], " 3m") || !strings.HasSuffix(lines[5], " 2h") || strings.HasSuffix(lines[1], "m") {
+		t.Errorf("running and idle agents show how long, blocked ones do not: %q", lines)
 	}
 	m.agents = m.agents[:1] // no running or idle agents: no empty sections
 	if rows, _ := m.listRows(); len(rows) != 3 {

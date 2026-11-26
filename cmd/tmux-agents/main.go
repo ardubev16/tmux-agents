@@ -8,10 +8,13 @@ package main
 
 import (
 	"fmt"
+	"hash/fnv"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -56,9 +59,47 @@ var (
 // Agent list sections, in list_agents' order; empty ones are not shown. No state: a session opened but not prompted.
 var groups = map[string]string{"blocked": "Waiting", "done": "Idle", "": "Idle", "working": "Running"}
 
+// Agents in the same project (a repo and its worktrees) share a color in the list. 256-color hues kept apart from
+// the state colors (green, yellow, red).
+// shortcut: projects hash onto these 8, so two can share one; assign per listed project if that gets confusing.
+var projectColors = []lipgloss.Color{"33", "135", "37", "205", "99", "43", "168", "75"}
+
+func projectColor(project string) lipgloss.Color {
+	h := fnv.New32a()
+	h.Write([]byte(project))
+	return projectColors[h.Sum32()%uint32(len(projectColors))]
+}
+
+var projects sync.Map // folder -> its project, so git runs once per folder
+
+// project is the main checkout of the repo dir is in, the same for all its worktrees (as main.sh's repo_root),
+// else dir itself.
+func project(dir string) string {
+	if p, ok := projects.Load(dir); ok {
+		return p.(string)
+	}
+	p := dir
+	if out, err := exec.Command("git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir").Output(); err == nil {
+		p = filepath.Dir(strings.TrimSpace(string(out)))
+	}
+	projects.Store(dir, p)
+	return p
+}
+
+// idleColor goes from the theme's done color through its working color to its blocked one as an agent sits idle.
+func idleColor(idle time.Duration) lipgloss.Color {
+	switch {
+	case idle < 15*time.Minute:
+		return lipgloss.Color(theme.Current.Done)
+	case idle < time.Hour:
+		return lipgloss.Color(theme.Current.Working)
+	}
+	return lipgloss.Color(theme.Current.Blocked)
+}
+
 type agent struct {
-	pane, state, target, command, path, transcript, socket, unread, title string
-	since                                                                 int64 // epoch seconds the state began, 0 = unknown
+	pane, state, target, command, path, transcript, socket, unread, title, project string
+	since                                                                          int64 // epoch seconds the state began, 0 = unknown
 }
 
 // A blocked agent shows a dialog, so a reply answers it instead of touching the draft.
@@ -145,6 +186,7 @@ func loadAgents(mainSh string) []agent {
 		f := append(strings.Split(line, "\t"), make([]string, 9)...)
 		a := agent{pane: f[0], state: f[1], target: f[2], command: f[3], path: f[4], transcript: f[5], socket: f[6], unread: f[7]}
 		a.since, _ = strconv.ParseInt(f[8], 10, 64)
+		a.project = project(a.path)
 		if a.transcript != "" {
 			a.title = transcript.Title(a.transcript)
 		}
@@ -660,15 +702,22 @@ func (m *model) listRows() (rows []string, owners []int) {
 			icon, note = "●", " finished"
 		}
 		color := base.Foreground(style.color)
-		// How long the agent has been running, at the right edge.
+		// How long the agent has been running or (colored by how long) idle, at the right edge.
 		since := ""
-		if a.since > 0 && a.state == "working" {
+		switch {
+		case a.since == 0 || a.state == "blocked":
+		case a.state == "working":
 			since = base.Faint(true).Render(ago(a.since, now) + " ")
+		default:
+			since = base.Foreground(idleColor(now.Sub(time.Unix(a.since, 0)))).Render(ago(a.since, now) + " ")
 		}
-		first := base.Render(" ") + color.Render(icon) + base.Render(" ") + base.Bold(true).Render(name(a)) + color.Render(note)
+		// A stripe and the project name in the project's color group the agents working on the same one.
+		proj := base.Foreground(projectColor(a.project))
+		first := proj.Render("▌") + color.Render(icon) + base.Render(" ") + base.Bold(true).Render(name(a)) + color.Render(note)
 		first = ansi.Truncate(first, max(0, width-ansi.StringWidth(since)), base.Render("…"))
 		first += base.Render(strings.Repeat(" ", max(0, width-ansi.StringWidth(first)-ansi.StringWidth(since)))) + since
-		lines := []string{first, base.Render("   ") + base.Faint(true).Render(details(a))}
+		second := proj.Render("▌") + base.Render("  ") + proj.Render(filepath.Base(a.project)) + base.Faint(true).Render(" · "+details(a))
+		lines := []string{first, second}
 		for _, line := range lines {
 			line = ansi.Truncate(line, width, base.Render("…"))
 			rows = append(rows, line+base.Render(strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))))
