@@ -8,10 +8,10 @@ package main
 
 import (
 	"fmt"
-	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,15 +59,24 @@ var (
 // Agent list sections, in list_agents' order; empty ones are not shown. No state: a session opened but not prompted.
 var groups = map[string]string{"blocked": "Waiting", "done": "Idle", "": "Idle", "working": "Running"}
 
-// Agents in the same project (a repo and its worktrees) share a color in the list. 256-color hues kept apart from
-// the state colors (green, yellow, red).
-// shortcut: projects hash onto these 8, so two can share one; assign per listed project if that gets confusing.
-var projectColors = []lipgloss.Color{"33", "135", "37", "205", "99", "43", "168", "75"}
+// Distinct 256-color hues for project names; the list's projects take them in order.
+var palette = []lipgloss.Color{"39", "208", "170", "43", "148", "141"}
 
-func projectColor(project string) lipgloss.Color {
-	h := fnv.New32a()
-	h.Write([]byte(project))
-	return projectColors[h.Sum32()%uint32(len(projectColors))]
+// projectColors gives each project (a repo and its worktrees) of the agents its own color, as long as there are
+// enough. Sorted, so a project keeps its color while the set of projects stays the same.
+func projectColors(agents []agent) map[string]lipgloss.Color {
+	var projects []string
+	for _, a := range agents {
+		if !slices.Contains(projects, a.project) {
+			projects = append(projects, a.project)
+		}
+	}
+	slices.Sort(projects)
+	colors := map[string]lipgloss.Color{}
+	for i, p := range projects {
+		colors[p] = palette[i%len(palette)]
+	}
+	return colors
 }
 
 var projects sync.Map // folder -> its project, so git runs once per folder
@@ -678,7 +687,7 @@ func (m *model) listRows() (rows []string, owners []int) {
 	if m.filtering || m.filter.Value() != "" {
 		rows, owners = append(rows, ansi.Truncate(" "+m.filter.View(), width, "…")), append(owners, -1)
 	}
-	now := time.Now()
+	now, colors := time.Now(), projectColors(m.all) // all, so the filter does not shift colors
 	for i, a := range m.agents {
 		if g := groups[a.state]; g != group {
 			group = g
@@ -711,12 +720,11 @@ func (m *model) listRows() (rows []string, owners []int) {
 		default:
 			since = base.Foreground(idleColor(now.Sub(time.Unix(a.since, 0)))).Render(ago(a.since, now) + " ")
 		}
-		// A stripe and the project name in the project's color group the agents working on the same one.
-		proj := base.Foreground(projectColor(a.project))
-		first := proj.Render("▌") + color.Render(icon) + base.Render(" ") + base.Bold(true).Render(name(a)) + color.Render(note)
+		first := base.Render(" ") + color.Render(icon) + base.Render(" ") + base.Bold(true).Render(name(a)) + color.Render(note)
 		first = ansi.Truncate(first, max(0, width-ansi.StringWidth(since)), base.Render("…"))
 		first += base.Render(strings.Repeat(" ", max(0, width-ansi.StringWidth(first)-ansi.StringWidth(since)))) + since
-		second := proj.Render("▌") + base.Render("  ") + proj.Render(filepath.Base(a.project)) + base.Faint(true).Render(" · "+details(a))
+		// The project name in its color picks out the agents working on the same one.
+		second := base.Render("   ") + base.Foreground(colors[a.project]).Render(filepath.Base(a.project)) + base.Faint(true).Render(" · "+details(a))
 		lines := []string{first, second}
 		for _, line := range lines {
 			line = ansi.Truncate(line, width, base.Render("…"))
