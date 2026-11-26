@@ -12,7 +12,7 @@ own hooks, so nothing has to run inside a separate multiplexer.
 
 ## Installation
 
-Requirements: tmux ≥ 3.2, `git`, `fzf`, `jq` and `curl` (the dashboard, a single binary for Linux or macOS on
+Requirements: tmux ≥ 3.3, `git`, `fzf`, `jq` and `curl` (the dashboard, a single binary for Linux or macOS on
 amd64/arm64, is downloaded from the matching GitHub release on first launch). Optional: `notify-send` for desktop
 notifications on Linux (macOS uses `osascript`), [lazygit](https://github.com/jesseduffield/lazygit) for the
 dashboard's git view.
