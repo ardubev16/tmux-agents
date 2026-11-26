@@ -25,13 +25,21 @@ var Chunk int64 = 1 << 18
 // Tool-call argument shown next to the tool name, first match wins (omp's "i" is its intent line).
 var summaryKeys = []string{"i", "description", "command", "file_path", "path", "pattern", "query", "url"}
 
-// Block is one block of the chat: Markdown, or a step (thinking, a tool call) folded to an Icon and a one-line
-// Summary, with its full Detail (Markdown: the thoughts, or the arguments and result) shown when expanded.
+// Block is one block of the chat: Markdown, a prompt of the user's (plain text), or a step (thinking, a tool
+// call) folded to an Icon, the tool's Name and a one-line Summary, with its full Detail (Markdown: the
+// thoughts, or the arguments and result) shown when expanded.
 type Block struct {
-	Key                   string // stable across reads, so a step stays expanded
-	Markdown              string
-	Icon, Summary, Detail string
-	call, resultOf        string // tool call id: a result is a block of its own until attached to its call
+	Key                         string // stable across reads, so a step stays expanded
+	Markdown                    string
+	Prompt                      bool // Markdown is what the user typed, shown as typed
+	Icon, Name, Summary, Detail string
+	call, resultOf              string // tool call id: a result is a block of its own until attached to its call
+}
+
+// ThinkingStep folds thoughts to their first line.
+func ThinkingStep(thoughts string) Block {
+	thoughts = strings.TrimSpace(thoughts)
+	return Block{Icon: "∴", Summary: firstLine(thoughts), Detail: thoughts}
 }
 
 type part struct {
@@ -83,13 +91,16 @@ func toolStep(p part) Block {
 	var lines []string
 	for _, k := range slices.Sorted(maps.Keys(args)) {
 		v, ok := args[k].(string)
+		if k == "i" {
+			continue // omp's intent line: the summary already
+		}
 		if !ok {
 			b, _ := json.Marshal(args[k])
 			v = string(b)
 		}
 		lines = append(lines, k+": "+strings.ReplaceAll(v, "\n", "\n  "))
 	}
-	return Block{Icon: "⚙", Summary: strings.Join(strings.Fields(name+" "+summary), " "), Detail: fence(strings.Join(lines, "\n")), call: p.ID}
+	return Block{Icon: "⚙", Name: name, Summary: strings.Join(strings.Fields(summary), " "), Detail: fence(strings.Join(lines, "\n")), call: p.ID}
 }
 
 // fence puts s in a code block whose fence is longer than any run of backticks in s; "" stays "". Tabs become
@@ -311,17 +322,16 @@ func (e *entry) blocks() []Block {
 			if t == "" {
 				continue
 			}
-			if role == "user" {
-				// Claude Code logs slash commands and their output as user messages.
-				if strings.HasPrefix(t, "<command-") || strings.HasPrefix(t, "<local-command") {
-					continue
-				}
-				t = "> " + strings.ReplaceAll(t, "\n", "\n> ")
+			// Claude Code logs slash commands and their output as user messages.
+			if role == "user" && (strings.HasPrefix(t, "<command-") || strings.HasPrefix(t, "<local-command")) {
+				continue
 			}
-			out = append(out, Block{Key: key, Markdown: t})
+			out = append(out, Block{Key: key, Markdown: t, Prompt: role == "user"})
 		case "thinking":
-			if t := strings.TrimSpace(p.Thinking); t != "" {
-				out = append(out, Block{Key: key, Icon: "✻", Summary: firstLine(t), Detail: t})
+			if strings.TrimSpace(p.Thinking) != "" {
+				b := ThinkingStep(p.Thinking)
+				b.Key = key
+				out = append(out, b)
 			}
 		case "toolCall", "tool_use":
 			b := toolStep(p)

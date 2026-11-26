@@ -32,13 +32,16 @@ func omp(id string, parent any, role string, content ...m) m {
 
 func text(s string) m { return m{"type": "text", "text": s} }
 
-// texts is each block as its Markdown, or a step as its icon and summary.
+// texts is each block as its Markdown, a prompt quoted, or a step as its icon, name and summary.
 func texts(blocks []Block, more bool) ([]string, bool) {
 	var out []string
 	for _, b := range blocks {
-		if b.Icon != "" {
-			out = append(out, b.Icon+" "+b.Summary)
-		} else {
+		switch {
+		case b.Icon != "":
+			out = append(out, strings.Join(strings.Fields(b.Icon+" "+b.Name+" "+b.Summary), " "))
+		case b.Prompt:
+			out = append(out, "> "+b.Markdown)
+		default:
 			out = append(out, b.Markdown)
 		}
 	}
@@ -61,7 +64,7 @@ func TestOmpShowsOnlyTheActiveBranch(t *testing.T) {
 		m{"type": "message", "id": "5", "parentId": "4", "message": m{"role": "toolResult", "toolCallId": "c1", "content": []m{text("file list")}}},
 		omp("6", "5", "assistant", m{"type": "toolCall", "name": "read", "arguments": m{"i": "Reading `x`"}}),
 	)
-	want := []string{"> fix it", "✻ Looking", "rewound answer", "⚙ bash ls -la", "⚙ read Reading `x`"}
+	want := []string{"> fix it", "∴ Looking", "rewound answer", "⚙ bash ls -la", "⚙ read Reading `x`"}
 	if got := all(t, path); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -84,7 +87,7 @@ func TestClaude(t *testing.T) {
 		m{"type": "user", "uuid": "4", "parentUuid": "3", "message": m{"role": "user", "content": []m{{"type": "tool_result", "tool_use_id": "t1", "content": "x ``` y"}}}},
 		m{"type": "user", "uuid": "5", "parentUuid": "4", "message": m{"role": "user", "content": "<command-name>/clear</command-name>"}},
 	)
-	want := []string{"> hi\n> there", "**hello**", "⚙ Read /a"}
+	want := []string{"> hi\nthere", "**hello**", "⚙ Read /a"}
 	if got := all(t, path); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q", got, want)
 	}

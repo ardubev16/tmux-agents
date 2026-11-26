@@ -7,7 +7,7 @@ import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-type Block = { type?: string; text?: string };
+type Block = { type?: string; text?: string; thinking?: string };
 type Event = { toolName?: string; text?: string; prompt?: string; message?: { role?: string; content?: Block[] } };
 type Ctx = {
   hasUI?: boolean;
@@ -17,7 +17,8 @@ type Ctx = {
 type Pi = { on(event: string, handler: (event: Event, ctx: Ctx) => void): void };
 
 // queued: prompts submitted while the agent runs; omp writes them to the session file only when it delivers them.
-type Live = { text: string; thinking: boolean; tool: string; streaming: boolean; queued: string[] };
+// thoughts: the streaming message's thinking so far.
+type Live = { text: string; thinking: boolean; thoughts: string; tool: string; streaming: boolean; queued: string[] };
 // One per process, kept on globalThis so an extension reload keeps the socket and its subscribers.
 type Shared = {
   ctx?: Ctx;
@@ -93,14 +94,21 @@ export default function (pi: Pi): void {
   on("message_update", (event) => {
     if (event.message?.role !== "assistant") return;
     const blocks = event.message.content ?? [];
-    const text = blocks
-      .filter((b) => b.type === "text")
-      .map((b) => b.text ?? "")
-      .join("\n\n");
-    push({ text, thinking: blocks.at(-1)?.type === "thinking", streaming: true });
+    const texts: string[] = [];
+    const thoughts: string[] = [];
+    for (const b of blocks) {
+      if (b.type === "text") texts.push(b.text ?? "");
+      if (b.type === "thinking") thoughts.push(b.thinking ?? "");
+    }
+    push({
+      text: texts.join("\n\n"),
+      thoughts: thoughts.join("\n\n"),
+      thinking: blocks.at(-1)?.type === "thinking",
+      streaming: true,
+    });
   });
   on("message_end", (event) => {
-    if (event.message?.role === "assistant") push({ text: "", thinking: false, streaming: false });
+    if (event.message?.role === "assistant") push({ text: "", thoughts: "", thinking: false, streaming: false });
   });
   on("tool_execution_start", (event) => {
     push({ tool: event.toolName ?? "tool" });
@@ -116,7 +124,7 @@ export default function (pi: Pi): void {
 
 function serve(): Shared {
   const shared: Shared = {
-    live: { text: "", thinking: false, tool: "", streaming: false, queued: [] },
+    live: { text: "", thinking: false, thoughts: "", tool: "", streaming: false, queued: [] },
     running: false,
     subscribers: new Set(),
     socketPath: join(tmpdir(), `tmux-agents-${process.pid}.sock`),

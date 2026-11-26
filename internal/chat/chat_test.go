@@ -25,7 +25,7 @@ func TestNothingIsCutOrWiderThanTheView(t *testing.T) {
 		"> "+strings.Repeat("word ", 30),
 		"```\n"+long+"\n```",
 		"| a | b |\n|---|---|\n| "+strings.Repeat("y", 80)+" | z |",
-	), "", false)
+	), nil, false, false)
 	text := ""
 	for _, line := range c.Lines() {
 		if w := ansi.StringWidth(line); w > 40 {
@@ -51,49 +51,79 @@ func TestOlderBlocksKeepTheViewInPlace(t *testing.T) {
 	for i := range 20 {
 		texts = append(texts, fmt.Sprintf("answer %d", i))
 	}
-	c.Update(markdown(texts[10:]...), "", true)
+	c.Update(markdown(texts[10:]...), nil, false, true)
 	c.ScrollBy(-1000)
 	if !c.AtTop() {
 		t.Fatal("expected to be at the top")
 	}
 	top := ansi.Strip(c.Lines()[0])
-	c.Update(markdown(texts...), "", false)
+	c.Update(markdown(texts...), nil, false, false)
 	if got := ansi.Strip(c.Lines()[c.offset]); got != top {
 		t.Errorf("view jumped: top line %q, want %q", got, top)
 	}
 }
 
-func TestStepsAreOneLineUntilExpanded(t *testing.T) {
+func plain(c *Chat) string {
+	var lines []string
+	for _, line := range c.Lines() {
+		lines = append(lines, strings.TrimRight(ansi.Strip(line), " ")) // glamour pads to the width
+	}
+	return strings.Join(lines, "\n")
+}
+
+func TestStepsAreOneLineUntilClicked(t *testing.T) {
 	var c Chat
 	c.SetSize(40, 20)
 	c.Update([]transcript.Block{
-		{Key: "1", Icon: "✻", Summary: "Planning", Detail: "deep thoughts"},
-		{Key: "2", Icon: "⚙", Summary: "bash ls", Detail: "```\nfile list\n```"},
+		{Key: "1", Icon: "∴", Summary: "Planning", Detail: "deep thoughts"},
+		{Key: "2", Icon: "⚙", Name: "bash", Summary: "ls", Detail: "```\nfile list\n```"},
 		{Markdown: "done"},
-	}, "", false)
-	plain := func() string {
-		var lines []string
-		for _, line := range c.Lines() {
-			lines = append(lines, strings.TrimRight(ansi.Strip(line), " ")) // glamour pads to the width
-		}
-		return strings.Join(lines, "\n")
-	}
-	if got, want := plain(), "▸ ✻ Planning\n▸ ⚙ bash ls\n\ndone"; got != want {
+	}, nil, false, false)
+	if got, want := plain(&c), "∴ Planning\n⚙ bash ls\n\ndone"; got != want {
 		t.Fatalf("folded:\n%s\nwant:\n%s", got, want)
 	}
-	if !c.Toggle(1) || !strings.Contains(plain(), "▾ ⚙ bash ls\n│ ") || !strings.Contains(plain(), "file list") ||
-		strings.Contains(plain(), "deep thoughts") {
-		t.Errorf("clicking the tool call should expand only it:\n%s", plain())
+	if !c.Toggle(1) || !strings.Contains(plain(&c), "⚙ bash ls\n│ ") || !strings.Contains(plain(&c), "file list") ||
+		strings.Contains(plain(&c), "deep thoughts") {
+		t.Errorf("clicking the tool call should expand only it:\n%s", plain(&c))
 	}
 	if c.Toggle(len(c.Lines()) - 1) {
 		t.Error("prose is not a step")
 	}
-	c.ToggleAll()
-	if !strings.Contains(plain(), "deep thoughts") || !strings.Contains(plain(), "file list") {
-		t.Errorf("expand all:\n%s", plain())
-	}
-	c.ToggleAll()
+	c.Toggle(1)
 	if got := len(c.Lines()); got != 4 {
-		t.Errorf("fold all: %d lines\n%s", got, plain())
+		t.Errorf("clicking again folds it: %d lines\n%s", got, plain(&c))
+	}
+}
+
+func TestTheStepBeingWrittenIsExpandedThenFolds(t *testing.T) {
+	var c Chat
+	c.SetSize(40, 20)
+	tool := transcript.Block{Key: "1", Icon: "⚙", Name: "bash", Summary: "ls", Detail: "```\nfile list\n```"}
+	thinking := transcript.ThinkingStep("**Next**\n\nmore thoughts")
+	c.Update([]transcript.Block{tool}, nil, true, false)
+	if !strings.Contains(plain(&c), "file list") {
+		t.Errorf("running tool folded:\n%s", plain(&c))
+	}
+	c.Update(nil, []transcript.Block{thinking}, true, false)
+	if got := plain(&c); strings.Contains(got, "file list") || !strings.Contains(got, "more thoughts") {
+		t.Errorf("only the thoughts being written should be expanded:\n%s", got)
+	}
+	c.Update(nil, []transcript.Block{thinking, {Markdown: "answer"}}, true, false)
+	if got := plain(&c); strings.Contains(got, "more thoughts") || !strings.Contains(got, "∴ Next") {
+		t.Errorf("thoughts should fold once the answer starts:\n%s", got)
+	}
+}
+
+func TestPromptsAreBoxedAsTyped(t *testing.T) {
+	var c Chat
+	c.SetSize(20, 20)
+	c.Update([]transcript.Block{{Prompt: true, Markdown: "fix **it** " + strings.Repeat("word ", 6)}}, nil, false, false)
+	for _, line := range c.Lines() {
+		if w := ansi.StringWidth(line); w != 20 {
+			t.Errorf("box line %d wide, want the view's 20: %q", w, ansi.Strip(line))
+		}
+	}
+	if got := plain(&c); !strings.Contains(got, "fix **it**") || strings.Count(got, "word") != 6 {
+		t.Errorf("prompt not shown as typed:\n%s", got)
 	}
 }

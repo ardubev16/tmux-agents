@@ -14,6 +14,7 @@ import (
 type Live struct {
 	Text      string   `json:"text"`
 	Thinking  bool     `json:"thinking"`
+	Thoughts  string   `json:"thoughts"` // the streaming message's thinking so far
 	Tool      string   `json:"tool"`
 	Streaming bool     `json:"streaming"`
 	Queued    []string `json:"queued"` // prompts submitted while the agent runs, not delivered yet

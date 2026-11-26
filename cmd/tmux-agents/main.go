@@ -295,19 +295,30 @@ func (m *model) pollChat(force bool) {
 		}
 		blocks, more = t.Blocks(m.wanted)
 	}
-	m.chat.Update(blocks, m.liveMarkdown(), more)
+	m.chat.Update(blocks, m.liveBlocks(), m.writing(), more)
 }
 
-// liveMarkdown is the in-progress reply, then prompts the agent has queued but not received yet.
-func (m *model) liveMarkdown() string {
-	var parts []string
+// liveBlocks is the in-progress reply (its thoughts as a step, then its text), then prompts the agent has queued
+// but not received yet.
+func (m *model) liveBlocks() []transcript.Block {
+	var out []transcript.Block
+	if m.live.Streaming && m.live.Thoughts != "" {
+		out = append(out, transcript.ThinkingStep(m.live.Thoughts))
+	}
 	if m.live.Streaming && m.live.Text != "" {
-		parts = append(parts, m.live.Text)
+		out = append(out, transcript.Block{Markdown: m.live.Text})
 	}
 	for _, prompt := range m.live.Queued {
-		parts = append(parts, "> "+strings.ReplaceAll(prompt, "\n", "\n> ")+"\n>\n> *queued*")
+		out = append(out, transcript.Block{Markdown: prompt + "\n\n(queued)", Prompt: true})
 	}
-	return strings.Join(parts, "\n\n")
+	return out
+}
+
+// writing reports whether the agent is still on the chat's last step (writing its thoughts, running its tool),
+// which then shows expanded. omp says so on its socket; for Claude Code, whatever it does while working.
+func (m *model) writing() bool {
+	a := m.agent()
+	return a != nil && a.state == "working" && (a.socket == "" || m.live.Streaming || m.live.Tool != "")
 }
 
 func (m *model) scrollChat(delta int) {
@@ -364,7 +375,7 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		if finished {
 			m.pollChat(true) // the finished reply is in the session file now
 		} else {
-			m.chat.Update(nil, m.liveMarkdown(), m.chat.More)
+			m.chat.Update(nil, m.liveBlocks(), m.writing(), m.chat.More)
 		}
 	case termMsg:
 		if m.lazygit != nil && m.lazygit.Exited() {
@@ -470,8 +481,6 @@ func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 				go func() { _ = cmd.Wait() }()
 			}
 		}
-	case "o":
-		m.chat.ToggleAll()
 	case "/":
 		m.filtering = true
 		return m.filter.Focus()
@@ -754,7 +763,7 @@ func (m *model) View() string {
 	}
 	sep := border.Render(strings.Repeat("│\n", body-1) + "│")
 	main := lipgloss.JoinHorizontal(lipgloss.Top, list, sep, " ", strings.Join(right, "\n"))
-	help := "↑↓ select · ⏎ switch · ^r reply · / filter · tab lazygit · pgup/pgdn scroll · o/click expand steps · x close agent · q/esc close"
+	help := "↑↓ select · ⏎ switch · ^r reply · / filter · tab lazygit · pgup/pgdn scroll · click a step to expand it · x close agent · q/esc close"
 	switch {
 	case m.lazygit != nil:
 		help = "keys go to lazygit · quit it (q) to return to the chat"
@@ -784,6 +793,9 @@ func main() {
 	if len(os.Args) != 2 {
 		fmt.Fprintln(os.Stderr, "Usage: tmux-agents <path to main.sh>")
 		os.Exit(1)
+	}
+	if bg, ok := promptBackground(queryColors()); ok {
+		chat.PromptBackground = lipgloss.Color(bg)
 	}
 	m := newDashboard(os.Args[1])
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
