@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -20,17 +22,28 @@ import (
 // Chunk is how many bytes are read per step when walking back through the file.
 var Chunk int64 = 1 << 18
 
-const toolPrefix = "- `"
-
 // Tool-call argument shown next to the tool name, first match wins (omp's "i" is its intent line).
 var summaryKeys = []string{"i", "description", "command", "file_path", "path", "pattern", "query", "url"}
 
+// Block is one block of the chat: Markdown, or a step (thinking, a tool call) folded to an Icon and a one-line
+// Summary, with its full Detail (Markdown: the thoughts, or the arguments and result) shown when expanded.
+type Block struct {
+	Key                   string // stable across reads, so a step stays expanded
+	Markdown              string
+	Icon, Summary, Detail string
+	call, resultOf        string // tool call id: a result is a block of its own until attached to its call
+}
+
 type part struct {
-	Type      string         `json:"type"`
-	Text      string         `json:"text"`
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments"` // omp
-	Input     map[string]any `json:"input"`     // Claude Code
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Arguments map[string]any  `json:"arguments"`   // omp
+	Input     map[string]any  `json:"input"`       // Claude Code
+	ToolUseID string          `json:"tool_use_id"` // Claude Code tool_result
+	Content   json.RawMessage `json:"content"`     // Claude Code tool_result: a string or a list of parts
 }
 
 type entry struct {
@@ -42,15 +55,16 @@ type entry struct {
 	IsMeta      bool   `json:"isMeta"`
 	IsSidechain bool   `json:"isSidechain"`
 	Message     *struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"` // a string or a list of parts
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`    // a string or a list of parts
+		ToolCallID string          `json:"toolCallId"` // omp toolResult
 	} `json:"message"`
 }
 
 func (e *entry) key() string    { return e.ID + e.UUID }
 func (e *entry) parent() string { return e.ParentID + e.ParentUUID }
 
-func toolLine(p part) string {
+func toolStep(p part) Block {
 	args := p.Arguments
 	if args == nil {
 		args = p.Input
@@ -62,15 +76,66 @@ func toolLine(p part) string {
 			break
 		}
 	}
-	summary = strings.Join(strings.Fields(summary), " ")
-	if r := []rune(summary); len(r) > 100 {
-		summary = string(r[:100])
-	}
 	name := p.Name
 	if name == "" {
 		name = "?"
 	}
-	return strings.TrimRight(fmt.Sprintf("%s%s` %s", toolPrefix, name, strings.ReplaceAll(summary, "`", "'")), " ")
+	var lines []string
+	for _, k := range slices.Sorted(maps.Keys(args)) {
+		v, ok := args[k].(string)
+		if !ok {
+			b, _ := json.Marshal(args[k])
+			v = string(b)
+		}
+		lines = append(lines, k+": "+strings.ReplaceAll(v, "\n", "\n  "))
+	}
+	return Block{Icon: "⚙", Summary: strings.Join(strings.Fields(name+" "+summary), " "), Detail: fence(strings.Join(lines, "\n")), call: p.ID}
+}
+
+// fence puts s in a code block whose fence is longer than any run of backticks in s; "" stays "". Tabs become
+// spaces: the view measures a tab as one column, the terminal as up to eight.
+func fence(s string) string {
+	if s = strings.ReplaceAll(strings.Trim(s, "\n"), "\t", "    "); s == "" {
+		return ""
+	}
+	longest, run := 0, 0
+	for _, r := range s {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	f := strings.Repeat("`", max(3, longest+1))
+	return f + "\n" + s + "\n" + f
+}
+
+// contentText is the text of message content: a string or a list of parts.
+func contentText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var parts []part
+	_ = json.Unmarshal(raw, &parts) // unreadable content has no text
+	var texts []string
+	for _, p := range parts {
+		if p.Type == "text" {
+			texts = append(texts, p.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+// firstLine is the first non-empty line of Markdown, without heading or bold markers.
+func firstLine(md string) string {
+	for _, line := range strings.Split(md, "\n") {
+		if line = strings.Trim(line, "*# \t"); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 // question renders what an ask tool asks the user: omp's HTML form or Claude Code's (and older omp's) list of
@@ -106,7 +171,7 @@ func question(p part) string {
 	if len(blocks) == 0 {
 		return ""
 	}
-	// The heading also keeps a first item like "- `x`" from passing for a tool line.
+	// The heading sets the question apart from the agent's prose.
 	md := "**Question**"
 	for i, block := range blocks {
 		if i > 0 && strings.HasPrefix(block, "- ") && strings.HasPrefix(blocks[i-1], "- ") {
@@ -216,11 +281,17 @@ func rawText(n *html.Node) string {
 	return b.String()
 }
 
-func (e *entry) blocks() []string {
+func (e *entry) blocks() []Block {
 	if e.IsMeta || e.IsSidechain || e.Message == nil || (e.Type != "message" && e.Type != "user" && e.Type != "assistant") {
 		return nil
 	}
 	role := e.Message.Role
+	if role == "toolResult" { // omp
+		if e.Message.ToolCallID == "" {
+			return nil
+		}
+		return []Block{{resultOf: e.Message.ToolCallID, Detail: contentText(e.Message.Content)}}
+	}
 	if role != "user" && role != "assistant" {
 		return nil
 	}
@@ -231,8 +302,9 @@ func (e *entry) blocks() []string {
 	} else if json.Unmarshal(e.Message.Content, &parts) != nil {
 		return nil
 	}
-	var out []string
-	for _, p := range parts {
+	var out []Block
+	for i, p := range parts {
+		key := fmt.Sprint(e.key(), "/", i)
 		switch p.Type {
 		case "text":
 			t := strings.TrimSpace(p.Text)
@@ -246,11 +318,21 @@ func (e *entry) blocks() []string {
 				}
 				t = "> " + strings.ReplaceAll(t, "\n", "\n> ")
 			}
-			out = append(out, t)
+			out = append(out, Block{Key: key, Markdown: t})
+		case "thinking":
+			if t := strings.TrimSpace(p.Thinking); t != "" {
+				out = append(out, Block{Key: key, Icon: "✻", Summary: firstLine(t), Detail: t})
+			}
 		case "toolCall", "tool_use":
-			out = append(out, toolLine(p))
+			b := toolStep(p)
+			b.Key = key
+			out = append(out, b)
 			if q := question(p); q != "" {
-				out = append(out, q)
+				out = append(out, Block{Key: key + "?", Markdown: q})
+			}
+		case "tool_result": // Claude Code
+			if p.ToolUseID != "" {
+				out = append(out, Block{resultOf: p.ToolUseID, Detail: contentText(p.Content)})
 			}
 		}
 	}
@@ -356,9 +438,9 @@ func (t *Transcript) refresh(f *os.File) error {
 	return nil
 }
 
-// Blocks returns at least `wanted` newest Markdown blocks of the active branch, oldest first (consecutive
-// tool calls share one), and whether older ones exist.
-func (t *Transcript) Blocks(wanted int) ([]string, bool) {
+// Blocks returns at least `wanted` newest blocks of the active branch, oldest first, each tool result in its
+// call's Detail, and whether older ones exist.
+func (t *Transcript) Blocks(wanted int) ([]Block, bool) {
 	f, err := os.Open(t.path)
 	if err != nil {
 		return nil, false
@@ -370,7 +452,7 @@ func (t *Transcript) Blocks(wanted int) ([]string, bool) {
 	for t.leaf == "" && t.older(f) {
 	}
 	// Both formats are trees (rewinds/forks branch off): walk back from the leaf.
-	var chain [][]string
+	var chain [][]Block
 	count, key, seen := 0, t.leaf, map[string]bool{}
 	for key != "" && !seen[key] && count < wanted {
 		e, ok := t.entries[key]
@@ -385,12 +467,19 @@ func (t *Transcript) Blocks(wanted int) ([]string, bool) {
 		count += len(chain[len(chain)-1])
 		key = e.parent()
 	}
-	var out []string
+	var out []Block
+	calls := map[string]int{} // tool call id -> its block in out
 	for i := len(chain) - 1; i >= 0; i-- {
 		for _, b := range chain[i] {
-			if n := len(out); n > 0 && strings.HasPrefix(b, toolPrefix) && strings.HasPrefix(out[n-1], toolPrefix) {
-				out[n-1] += "\n" + b
-			} else {
+			switch {
+			case b.resultOf != "":
+				if at, ok := calls[b.resultOf]; ok {
+					out[at].Detail = strings.Trim(out[at].Detail+"\n\n"+fence(b.Detail), "\n")
+				}
+			case b.call != "":
+				calls[b.call] = len(out)
+				fallthrough
+			default:
 				out = append(out, b)
 			}
 		}

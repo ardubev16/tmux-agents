@@ -286,7 +286,7 @@ func (m *model) pollChat(force bool) {
 	}
 	m.shown = key
 	// Not nil: nil would keep the blocks shown before, i.e. the previously selected agent's chat.
-	blocks, more := []string{}, false
+	blocks, more := []transcript.Block{}, false
 	if exists {
 		t, ok := m.transcripts[a.transcript]
 		if !ok {
@@ -405,11 +405,16 @@ func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
 	case tea.MouseButtonWheelDown:
 		m.scrollChat(3)
 	case tea.MouseButtonLeft:
-		if msg.Action == tea.MouseActionPress && msg.X < m.listWidth() && !m.replying {
+		if msg.Action != tea.MouseActionPress || m.replying {
+			return nil
+		}
+		if msg.X < m.listWidth() {
 			if _, owners := m.listRows(); m.listTop+msg.Y < len(owners) && owners[m.listTop+msg.Y] >= 0 {
 				m.selected = owners[m.listTop+msg.Y]
 				m.agentChanged()
 			}
+		} else if msg.X >= m.listWidth()+2 {
+			m.chat.Toggle(msg.Y - 2) // the chat sits below the header and its rule
 		}
 	}
 	return nil
@@ -465,6 +470,8 @@ func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 				go func() { _ = cmd.Wait() }()
 			}
 		}
+	case "o":
+		m.chat.ToggleAll()
 	case "/":
 		m.filtering = true
 		return m.filter.Focus()
@@ -747,7 +754,7 @@ func (m *model) View() string {
 	}
 	sep := border.Render(strings.Repeat("│\n", body-1) + "│")
 	main := lipgloss.JoinHorizontal(lipgloss.Top, list, sep, " ", strings.Join(right, "\n"))
-	help := "↑↓ select · ⏎ switch · ^r reply · / filter · tab lazygit · pgup/pgdn scroll · x close agent · q/esc close"
+	help := "↑↓ select · ⏎ switch · ^r reply · / filter · tab lazygit · pgup/pgdn scroll · o/click expand steps · x close agent · q/esc close"
 	switch {
 	case m.lazygit != nil:
 		help = "keys go to lazygit · quit it (q) to return to the chat"

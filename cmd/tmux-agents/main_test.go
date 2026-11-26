@@ -184,7 +184,8 @@ func TestChatShowsTheNewestAndLoadsOlderOnScroll(t *testing.T) {
 func TestNewSessionShowsAnEmptyChatNotThePreviousOne(t *testing.T) {
 	m, _, _ := newModel(t, "")
 	press(m, "down") // the agent with a long transcript
-	m.agents[2].transcript = filepath.Join(t.TempDir(), "new.jsonl") // reported, but omp writes it with the first message
+	// Reported, but omp writes it with the first message.
+	m.agents[2].transcript = filepath.Join(t.TempDir(), "new.jsonl")
 	press(m, "down")
 	if len(m.chat.Blocks) != 0 {
 		t.Errorf("chat shows %d blocks of another session", len(m.chat.Blocks))

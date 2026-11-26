@@ -1,12 +1,16 @@
-// Package chat is a scrollable view of Markdown blocks rendered at the view's width, plus a live tail.
+// Package chat is a scrollable view of transcript blocks rendered at the view's width, plus a live tail.
 //
 // Glamour renders the Markdown; lines it cannot wrap (code, tables) are hard-wrapped, so nothing is cut.
 // Rendered blocks are cached per width, so appending a message or streaming the tail only renders what
-// changed. The owner passes only the newest blocks and asks for more when AtTop.
+// changed. The owner passes only the newest blocks and asks for more when AtTop. Steps (thinking, tool calls)
+// show as one gray line each, expanded to their detail with Toggle or ToggleAll.
 package chat
 
 import (
+	"slices"
 	"strings"
+
+	"github.com/ardubev16/tmux-agents/internal/transcript"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
@@ -17,15 +21,20 @@ import (
 )
 
 type Chat struct {
-	Blocks []string
+	Blocks []transcript.Block
 	Live   string
 	More   bool // older blocks exist that the owner has not passed yet
 
 	width, height, offset int
 	lines                 []string
-	cache                 map[string][]string
+	owners                []int // the block each line shows, -1 for the blank lines between blocks
+	expandAll             bool
+	toggled               map[string]bool             // steps expanded or folded against expandAll, by Key
+	cache                 map[int]map[string][]string // by width, then Markdown
 	renderer              *glamour.TermRenderer
 }
+
+var step = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 
 // ompStyle mirrors omp's colorful Markdown, from the terminal's ANSI palette: H1 magenta, H2 yellow,
 // H3-H6 blue, strong/emphasis magenta, inline code green, links cyan, muted rules and quote bars, prose
@@ -73,23 +82,26 @@ func newRenderer(width int) *glamour.TermRenderer {
 }
 
 // render is renderLines cached per block; the live tail changes on every update, so it is not cached.
-func (c *Chat) render(markdown string) []string {
-	if lines, ok := c.cache[markdown]; ok {
+func (c *Chat) render(markdown string, width int) []string {
+	if lines, ok := c.cache[width][markdown]; ok {
 		return lines
 	}
-	lines := c.renderLines(markdown)
-	c.cache[markdown] = lines
+	lines := c.renderLines(markdown, width)
+	if c.cache[width] == nil {
+		c.cache[width] = map[string][]string{}
+	}
+	c.cache[width][markdown] = lines
 	return lines
 }
 
-func (c *Chat) renderLines(markdown string) []string {
+func (c *Chat) renderLines(markdown string, width int) []string {
 	out, err := c.renderer.Render(markdown)
 	if err != nil {
 		out = markdown
 	}
 	var lines []string
 	for _, line := range strings.Split(strings.Trim(out, "\n"), "\n") {
-		lines = append(lines, strings.Split(xansi.Hardwrap(line, c.width, true), "\n")...)
+		lines = append(lines, strings.Split(xansi.Hardwrap(line, width, true), "\n")...)
 	}
 	for len(lines) > 0 && strings.TrimSpace(xansi.Strip(lines[0])) == "" {
 		lines = lines[1:] // glamour pads blocks with blank lines; the view adds its own separators
@@ -102,18 +114,18 @@ func (c *Chat) renderLines(markdown string) []string {
 
 func (c *Chat) SetSize(width, height int) {
 	if width != c.width {
-		c.width, c.cache, c.renderer = width, map[string][]string{}, newRenderer(width)
+		c.width, c.cache, c.renderer = width, map[int]map[string][]string{}, newRenderer(width)
 	}
 	c.height = height
 	c.relayout(0)
 }
 
 // Update replaces the content; nil blocks keep the current ones.
-func (c *Chat) Update(blocks []string, live string, more bool) {
+func (c *Chat) Update(blocks []transcript.Block, live string, more bool) {
 	prepended := 0
 	if blocks != nil {
 		// Older blocks loaded in front: keep the view on the same text instead of jumping.
-		if old := c.Blocks; len(old) > 0 && len(blocks) > len(old) && equal(blocks[len(blocks)-len(old):], old) {
+		if old := c.Blocks; len(old) > 0 && len(blocks) > len(old) && slices.Equal(blocks[len(blocks)-len(old):], old) {
 			prepended = len(blocks) - len(old)
 		}
 		c.Blocks = blocks
@@ -122,13 +134,31 @@ func (c *Chat) Update(blocks []string, live string, more bool) {
 	c.relayout(prepended)
 }
 
-func equal(a, b []string) bool {
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
+// Toggle expands or folds the step shown on line y of the view, keeping the view in place; false if there is none.
+func (c *Chat) Toggle(y int) bool {
+	i := c.offset + y
+	if y < 0 || i >= len(c.owners) || c.owners[i] < 0 || c.owners[i] >= len(c.Blocks) || c.Blocks[c.owners[i]].Icon == "" {
+		return false
 	}
-	return len(a) == len(b)
+	key := c.Blocks[c.owners[i]].Key
+	if c.toggled[key] {
+		delete(c.toggled, key)
+	} else {
+		if c.toggled == nil {
+			c.toggled = map[string]bool{}
+		}
+		c.toggled[key] = true
+	}
+	offset := c.offset
+	c.relayout(0)
+	c.offset = min(offset, c.maxOffset())
+	return true
+}
+
+// ToggleAll expands every step, or folds them all back.
+func (c *Chat) ToggleAll() {
+	c.expandAll, c.toggled = !c.expandAll, nil
+	c.relayout(0)
 }
 
 func (c *Chat) maxOffset() int { return max(0, len(c.lines)-c.height) }
@@ -140,24 +170,44 @@ func (c *Chat) relayout(prepended int) {
 	follow := c.offset >= c.maxOffset()
 	blocks := c.Blocks
 	if c.Live != "" {
-		blocks = append(blocks[:len(blocks):len(blocks)], c.Live)
+		blocks = append(blocks[:len(blocks):len(blocks)], transcript.Block{Markdown: c.Live})
 	}
 	var lines []string
+	var owners []int
 	shift := 0
-	for i, block := range blocks {
-		if len(lines) > 0 {
-			lines = append(lines, "")
+	for i, b := range blocks {
+		// Steps in a row stay together, one line each; other blocks get a blank line around them.
+		if len(lines) > 0 && (b.Icon == "" || blocks[i-1].Icon == "") {
+			lines, owners = append(lines, ""), append(owners, -1)
 		}
 		if i == prepended {
 			shift = len(lines)
 		}
-		render := c.render
-		if i == len(c.Blocks) { // the live tail
-			render = c.renderLines
+		var add []string
+		switch {
+		case i == len(c.Blocks): // the live tail
+			add = c.renderLines(b.Markdown, c.width)
+		case b.Icon == "":
+			add = c.render(b.Markdown, c.width)
+		default:
+			expanded := c.expandAll != c.toggled[b.Key]
+			arrow := "▸ "
+			if expanded {
+				arrow = "▾ "
+			}
+			add = []string{step.Render(xansi.Truncate(arrow+b.Icon+" "+b.Summary, c.width, "…"))}
+			if expanded && b.Detail != "" {
+				for _, line := range c.render(b.Detail, c.width-2) {
+					add = append(add, step.Render("│ ")+line)
+				}
+			}
 		}
-		lines = append(lines, render(block)...)
+		lines = append(lines, add...)
+		for range add {
+			owners = append(owners, i)
+		}
 	}
-	c.lines = lines
+	c.lines, c.owners = lines, owners
 	switch {
 	case follow:
 		c.offset = c.maxOffset()

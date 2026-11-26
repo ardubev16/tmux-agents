@@ -32,10 +32,23 @@ func omp(id string, parent any, role string, content ...m) m {
 
 func text(s string) m { return m{"type": "text", "text": s} }
 
+// texts is each block as its Markdown, or a step as its icon and summary.
+func texts(blocks []Block, more bool) ([]string, bool) {
+	var out []string
+	for _, b := range blocks {
+		if b.Icon != "" {
+			out = append(out, b.Icon+" "+b.Summary)
+		} else {
+			out = append(out, b.Markdown)
+		}
+	}
+	return out, more
+}
+
 func all(t *testing.T, path string) []string {
 	t.Helper()
-	blocks, _ := New(path).Blocks(1 << 30)
-	return blocks
+	out, _ := texts(New(path).Blocks(1 << 30))
+	return out
 }
 
 func TestOmpShowsOnlyTheActiveBranch(t *testing.T) {
@@ -43,14 +56,21 @@ func TestOmpShowsOnlyTheActiveBranch(t *testing.T) {
 		m{"type": "session", "id": "s"},
 		omp("1", nil, "user", text("fix it")),
 		omp("2", "1", "assistant", text("abandoned answer")),
-		omp("3", "1", "assistant", m{"type": "thinking", "thinking": "hmm"}, text("rewound answer")),
-		omp("4", "3", "assistant", m{"type": "toolCall", "name": "bash", "arguments": m{"command": "ls\n-la"}}),
-		omp("5", "4", "toolResult", text("file list")),
+		omp("3", "1", "assistant", m{"type": "thinking", "thinking": "**Looking**\n\nhmm"}, text("rewound answer")),
+		omp("4", "3", "assistant", m{"type": "toolCall", "id": "c1", "name": "bash", "arguments": m{"command": "ls\n-la"}}),
+		m{"type": "message", "id": "5", "parentId": "4", "message": m{"role": "toolResult", "toolCallId": "c1", "content": []m{text("file list")}}},
 		omp("6", "5", "assistant", m{"type": "toolCall", "name": "read", "arguments": m{"i": "Reading `x`"}}),
 	)
-	want := []string{"> fix it", "rewound answer", "- `bash` ls -la\n- `read` Reading 'x'"}
+	want := []string{"> fix it", "✻ Looking", "rewound answer", "⚙ bash ls -la", "⚙ read Reading `x`"}
 	if got := all(t, path); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q", got, want)
+	}
+	blocks, _ := New(path).Blocks(100)
+	if got, want := blocks[1].Detail, "**Looking**\n\nhmm"; got != want {
+		t.Errorf("thinking detail %q, want %q", got, want)
+	}
+	if got, want := blocks[3].Detail, "```\ncommand: ls\n  -la\n```\n\n```\nfile list\n```"; got != want {
+		t.Errorf("tool detail %q, want %q", got, want)
 	}
 }
 
@@ -59,14 +79,18 @@ func TestClaude(t *testing.T) {
 		m{"type": "user", "uuid": "1", "parentUuid": nil, "message": m{"role": "user", "content": "hi\nthere"}},
 		m{"type": "user", "uuid": "2", "parentUuid": "1", "isMeta": true, "message": m{"role": "user", "content": "x"}},
 		m{"type": "assistant", "uuid": "3", "parentUuid": "2", "message": m{"role": "assistant", "content": []m{
-			text("**hello**"), {"type": "tool_use", "name": "Read", "input": m{"file_path": "/a"}},
+			text("**hello**"), {"type": "tool_use", "id": "t1", "name": "Read", "input": m{"file_path": "/a"}},
 		}}},
-		m{"type": "user", "uuid": "4", "parentUuid": "3", "message": m{"role": "user", "content": []m{{"type": "tool_result", "content": "x"}}}},
+		m{"type": "user", "uuid": "4", "parentUuid": "3", "message": m{"role": "user", "content": []m{{"type": "tool_result", "tool_use_id": "t1", "content": "x ``` y"}}}},
 		m{"type": "user", "uuid": "5", "parentUuid": "4", "message": m{"role": "user", "content": "<command-name>/clear</command-name>"}},
 	)
-	want := []string{"> hi\n> there", "**hello**", "- `Read` /a"}
+	want := []string{"> hi\n> there", "**hello**", "⚙ Read /a"}
 	if got := all(t, path); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q", got, want)
+	}
+	blocks, _ := New(path).Blocks(100)
+	if got, want := blocks[2].Detail, "```\nfile_path: /a\n```\n\n````\nx ``` y\n````"; got != want {
+		t.Errorf("tool detail %q, want %q", got, want)
 	}
 }
 
@@ -81,7 +105,7 @@ func TestReadsFromTheEndAndFollowsAppends(t *testing.T) {
 	path := writeJSONL(t, "s.jsonl", entries...)
 
 	reader := New(path)
-	blocks, more := reader.Blocks(2)
+	blocks, more := texts(reader.Blocks(2))
 	if len(blocks) != 2 || !strings.HasPrefix(blocks[0], "answer 2") || blocks[1] != "after rewind" || !more {
 		t.Fatalf("tail: %q more=%v", blocks, more)
 	}
@@ -89,7 +113,7 @@ func TestReadsFromTheEndAndFollowsAppends(t *testing.T) {
 		t.Error("the head of the file should not have been parsed")
 	}
 	want := []string{"> root", "answer 1 " + strings.Repeat("x", 50), "answer 2 " + strings.Repeat("x", 100), "after rewind"}
-	if blocks, more := reader.Blocks(100); !reflect.DeepEqual(blocks, want) || more {
+	if blocks, more := texts(reader.Blocks(100)); !reflect.DeepEqual(blocks, want) || more {
 		t.Errorf("full: %q more=%v", blocks, more)
 	}
 
@@ -98,7 +122,7 @@ func TestReadsFromTheEndAndFollowsAppends(t *testing.T) {
 	f.Write(append(line, '\n'))
 	f.WriteString(`{"type":"message","id":"half`) // still being written
 	f.Close()
-	if blocks, more := reader.Blocks(2); !reflect.DeepEqual(blocks, []string{"after rewind", "appended"}) || !more {
+	if blocks, more := texts(reader.Blocks(2)); !reflect.DeepEqual(blocks, []string{"after rewind", "appended"}) || !more {
 		t.Errorf("after append: %q more=%v", blocks, more)
 	}
 }
@@ -142,9 +166,9 @@ func TestQuestionsShowWithoutPrefilledAnswers(t *testing.T) {
 		omp("1", nil, "assistant", m{"type": "toolCall", "name": "ask", "arguments": m{"i": "Choosing", "html": form}}),
 		m{"type": "assistant", "uuid": "2", "parentUuid": "1", "message": m{"role": "assistant", "content": []any{m{"type": "tool_use", "name": "AskUserQuestion", "input": claude}}}})
 	want := []string{
-		"- `ask` Choosing",
+		"⚙ ask Choosing",
 		"**Question**\n\nSessions live in `memory`.\n\n**Session store**\n\n- SQLite\n- Redis\n- Lifetime",
-		"- `AskUserQuestion`",
+		"⚙ AskUserQuestion",
 		"**Question**\n\nFix it too?\n\n- Yes — same pass\n- No",
 	}
 	if got := all(t, path); !reflect.DeepEqual(got, want) {

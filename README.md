@@ -81,7 +81,8 @@ Agents are on the left, named after their session, in three sections: **Waiting*
 
 On the right is the highlighted agent's chat, rendered from its session file: it wraps to the popup width and
 stays readable while the pane shows something else. Questions the agent asks you (omp's `ask`, Claude Code's
-`AskUserQuestion`) appear with their choices, without the answers the agent prefilled. omp agents also stream
+`AskUserQuestion`) appear with their choices, without the answers the agent prefilled. Thoughts and tool calls
+show as one gray line each; expanded, they show the full thoughts, or the tool's arguments and result. omp agents also stream
 their reply as it is written, what they are doing, and prompts queued while they work. The header shows the
 agent's uncommitted changes to tracked files (`3 files +40 −12`) and unpushed commits (`⇡2`).
 
@@ -93,6 +94,7 @@ agent's uncommitted changes to tracked files (`3 files +40 −12`) and unpushed 
 | `/` | Fuzzy-filter the list by name, pane or command; `Enter` keeps the filter, `Esc` clears it |
 | `Tab` | Run lazygit in the agent's folder in place of the chat; keys and mouse go to it until you quit it |
 | `PgUp`/`PgDn`, wheel | Scroll the chat; scrolling to the top loads older messages |
+| `o`, click | Expand every thought and tool call (or fold them back); a click expands just the one clicked |
 | `x`, `x` | Stop the agent like a normal exit (SIGTERM, so it saves its session) and close its pane |
 | `q`/`Esc` | Close the dashboard |
 
