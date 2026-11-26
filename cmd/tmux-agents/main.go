@@ -701,12 +701,12 @@ func (m *model) header() string {
 	if a == nil {
 		return ""
 	}
-	// The git summary at the chat's right edge, clear of the scrollbar; the name and details give way to it.
+	// The git summary at the right edge, a column short of it; the name and details give way to it.
 	changes := ""
 	if m.changes != "" {
 		changes = "  " + busy.Render(m.changes)
 	}
-	width := m.rightWidth() - 2 - ansi.StringWidth(changes) // a space and the scrollbar, as the chat
+	width := m.rightWidth() - 1 - ansi.StringWidth(changes)
 	head := ansi.Truncate(bold.Render(name(*a))+"  "+dim.Render(details(*a)), width, "…")
 	return head + strings.Repeat(" ", max(0, width-ansi.StringWidth(head))) + changes
 }
