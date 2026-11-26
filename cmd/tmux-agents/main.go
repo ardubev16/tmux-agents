@@ -203,7 +203,8 @@ type model struct {
 	replying bool
 	reply    textarea.Model
 
-	keysOpen bool // the keybindings panel (?) shows in place of the chat
+	keysOpen         bool // the keybindings panel (?) shows in place of the chat
+	keysSel, keysTop int  // its highlighted key and first visible one
 
 	width, height int
 }
@@ -540,38 +541,62 @@ func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
 	return nil
 }
 
-// keybindings is what ? lists; the bar at the bottom shows only the keys a vim user would not guess.
-var keybindings = [][2]string{
-	{"↑/k ↓/j", "highlight the previous/next agent"},
-	{"1-9", "highlight the agent with that number"},
-	{"click", "highlight an agent; in the chat, expand or fold a step"},
-	{"enter", "switch to the agent's pane"},
-	{"ctrl+r", "reply to the agent"},
-	{"/", "filter the agents by name, pane or command"},
-	{"tab", "lazygit in the agent's folder"},
-	{"pgup/pgdn, wheel", "scroll the chat; at the top, load older messages"},
-	{"x x", "stop the agent and close its pane"},
-	{"?", "show or hide these keybindings"},
-	{"q/esc", "close the dashboard"},
+type keybinding struct{ key, short, detail string }
+
+// keybindings is what ? lists, with each key's detail below the list; the bar at the bottom shows only the keys a
+// vim user would not guess.
+var keybindings = []keybinding{
+	{"↑/k ↓/j", "previous/next agent", "Highlights the agent above or below; the chat on the right follows it."},
+	{"1-9", "agent by number", "Highlights the agent with that number. Numbers follow the visible list: with a filter, they count the matching agents."},
+	{"click", "highlight/expand", "In the list, highlights the agent. In the chat, expands or folds a thought or tool call to show all of it."},
+	{"enter", "switch to agent", "Closes the dashboard and switches to the highlighted agent's pane."},
+	{"ctrl+r", "reply", "Opens a reply box below the chat: enter sends it, ctrl+j adds a newline. For omp agents it starts from your half-typed prompt, and esc keeps what you wrote as that draft."},
+	{"/", "filter", "Fuzzy-filters the agents by name, pane or command. enter keeps the filter, esc clears it."},
+	{"tab", "lazygit", "Runs lazygit in the agent's folder in place of the chat. Keys and mouse go to it until you quit it."},
+	{"pgup/pgdn", "scroll chat", "Scrolls the chat by half a page, as does the mouse wheel. Scrolling to the top loads older messages."},
+	{"x x", "close agent", "Stops the agent like a normal exit (SIGTERM, so it saves its session) and closes its pane. The first x asks to confirm."},
+	{"?", "keybindings", "Shows or hides this list; j/k move through it."},
+	{"q/esc", "close", "Closes the dashboard. With a filter set, esc clears the filter first."},
 }
 
+// keysView is the ? panel: the keys with a short description, scrolled to keep the highlighted one in view, and
+// the highlighted key's detail below them.
 func (m *model) keysView() string {
-	width := 0
+	keyWidth, inner := 0, 0
 	for _, k := range keybindings {
-		width = max(width, ansi.StringWidth(k[0]))
+		keyWidth = max(keyWidth, ansi.StringWidth(k.key))
 	}
-	lines := []string{bold.Render("Keybindings"), ""}
 	for _, k := range keybindings {
-		lines = append(lines, busy.Render(k[0]+strings.Repeat(" ", width-ansi.StringWidth(k[0])))+"  "+k[1])
+		inner = max(inner, keyWidth+2+ansi.StringWidth(k.short))
 	}
+	inner = max(1, min(m.rightWidth()-4, max(inner, 50))) // inside the border and padding
+	detail := lipgloss.NewStyle().Width(inner).Render(keybindings[m.keysSel].detail)
+	// Border, title and separator take 4 rows; the detail takes what it needs.
+	visible := max(1, min(len(keybindings), m.chatHeight()-4-lipgloss.Height(detail)))
+	m.keysTop = max(min(m.keysTop, m.keysSel), m.keysSel-visible+1)
+	lines := []string{bold.Render("Keybindings") + dim.Render(fmt.Sprintf("  %d/%d", m.keysSel+1, len(keybindings)))}
+	for i := m.keysTop; i < min(len(keybindings), m.keysTop+visible); i++ {
+		k, style := keybindings[i], lipgloss.NewStyle()
+		if i == m.keysSel {
+			style = style.Background(lipgloss.Color(theme.Current.Selected))
+		}
+		line := style.Foreground(lipgloss.Color(theme.Current.Working)).Render(k.key+strings.Repeat(" ", keyWidth-ansi.StringWidth(k.key))) +
+			style.Render("  "+k.short)
+		lines = append(lines, ansi.Truncate(line, inner, "…")+style.Render(strings.Repeat(" ", max(0, inner-ansi.StringWidth(line)))))
+	}
+	lines = append(lines, border.Render(strings.Repeat("─", inner)), detail)
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(theme.Current.Border)).
-		Padding(0, 1).MaxWidth(m.rightWidth()).Render(strings.Join(lines, "\n"))
+		Padding(0, 1).Render(strings.Join(lines, "\n"))
 	return lipgloss.Place(m.rightWidth(), m.chatHeight(), lipgloss.Center, lipgloss.Center, box)
 }
 
 func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 	if m.keysOpen {
 		switch msg.String() {
+		case "up", "k":
+			m.keysSel = max(0, m.keysSel-1)
+		case "down", "j":
+			m.keysSel = min(len(keybindings)-1, m.keysSel+1)
 		case "?", "esc", "q":
 			m.keysOpen = false
 		}
@@ -940,7 +965,7 @@ func (m *model) View() string {
 	case m.filtering:
 		help = "type to fuzzy filter by name, pane or command · ⏎ keep · esc clear"
 	case m.keysOpen:
-		help = "esc close"
+		help = "j/k move · esc close"
 	}
 	return main + "\n" + dim.Render(ansi.Truncate(help, m.width, "…"))
 }
