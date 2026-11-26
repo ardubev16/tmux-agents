@@ -217,17 +217,17 @@ func TestListIsGroupedAndShowsNamesAndWhatNeedsYou(t *testing.T) {
 	rows, owners := m.listRows()
 	var lines []string
 	for i, row := range rows {
-		if i == 0 || owners[i] != owners[i-1] { // section headers and each agent's first line
+		if owners[i] < 0 || i == 0 || owners[i] != owners[i-1] { // headers, spacers and each agent's first line
 			lines = append(lines, strings.TrimSpace(ansi.Strip(row)))
 		}
 	}
-	want := []string{"Waiting", "● s:1.0 needs input", "Running", "Fix the bug", "Idle", "● s:3.0 finished"}
+	want := []string{"Waiting", "● s:1.0 needs input", "", "Running", "Fix the bug", "", "Idle", "● s:3.0 finished"}
 	for i := range want {
-		if i >= len(lines) || !strings.Contains(lines[i], want[i]) {
+		if i >= len(lines) || !strings.Contains(lines[i], want[i]) || (want[i] == "") != (lines[i] == "") {
 			t.Fatalf("rows %q, want %q", lines, want)
 		}
 	}
-	if !strings.HasSuffix(lines[3], " 3m") || !strings.HasSuffix(lines[5], " 2h") || strings.HasSuffix(lines[1], "m") {
+	if !strings.HasSuffix(lines[4], " 3m") || !strings.HasSuffix(lines[7], " 2h") || strings.HasSuffix(lines[1], "m") {
 		t.Errorf("running and idle agents show how long, blocked ones do not: %q", lines)
 	}
 	m.agents = m.agents[:1] // no running or idle agents: no empty sections

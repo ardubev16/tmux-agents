@@ -814,6 +814,9 @@ func (m *model) listRows() (rows []string, owners []int) {
 	now := time.Now()
 	for i, a := range m.agents {
 		if g := groups[a.state]; g != group {
+			if group != "" { // a blank row between sections
+				rows, owners = append(rows, ""), append(owners, -1)
+			}
 			group = g
 			rows, owners = append(rows, bold.Render(ansi.Truncate(" "+g, width, "…"))), append(owners, -1)
 		}
