@@ -580,7 +580,7 @@ func (m *model) keysView() string {
 		if i == m.keysSel {
 			style = style.Background(lipgloss.Color(theme.Current.Selected))
 		}
-		line := style.Foreground(lipgloss.Color(theme.Current.Working)).Render(k.key+strings.Repeat(" ", keyWidth-ansi.StringWidth(k.key))) +
+		line := style.Foreground(lipgloss.Color(theme.Current.Working)).Render(strings.Repeat(" ", keyWidth-ansi.StringWidth(k.key))+k.key) +
 			style.Render("  "+k.short)
 		lines = append(lines, ansi.Truncate(line, inner, "…")+style.Render(strings.Repeat(" ", max(0, inner-ansi.StringWidth(line)))))
 	}
