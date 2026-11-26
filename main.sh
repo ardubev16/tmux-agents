@@ -175,8 +175,9 @@ function status_bar() {
         END { printf "%s", counter(d, "○", n["done"]) counter(w, "⦿", n["working"]) counter(b, "●", n["blocked"]) }'
 }
 
+# $1: the pane the popup opens over, which the dashboard highlights when it runs an agent.
 function agent_dashboard() {
-    tmux display-popup -w 90% -h 90% -E "'$MAIN' dashboard"
+    tmux display-popup -w 90% -h 90% -E "TMUX_AGENTS_FOCUS='${1:-}' '$MAIN' dashboard"
 }
 
 # Popup body: runs the dashboard released with this version of the plugin, downloading it on first use and after

@@ -128,6 +128,7 @@ type (
 type model struct {
 	mainSh string
 	send   func(tea.Msg)
+	focus  string // the pane the dashboard was opened over: highlighted on open when it runs an agent
 
 	all      []agent // as list_agents reports them; agents is what the filter lets through
 	agents   []agent
@@ -182,6 +183,10 @@ func tick() tea.Cmd {
 
 func (m *model) Init() tea.Cmd {
 	m.reload()
+	if i := slices.IndexFunc(m.agents, func(a agent) bool { return a.pane == m.focus }); i > 0 {
+		m.selected = i
+		m.agentChanged()
+	}
 	return tea.Batch(tick(), m.fetchChanges())
 }
 
@@ -867,6 +872,7 @@ func main() {
 		}
 	}
 	m := newDashboard(os.Args[1])
+	m.focus = os.Getenv("TMUX_AGENTS_FOCUS")
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	m.send = p.Send
 	if _, err := p.Run(); err != nil {

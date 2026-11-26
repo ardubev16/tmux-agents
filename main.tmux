@@ -33,7 +33,7 @@ function init_tmux_agents() {
     # Agent hooks read it with `tmux show-environment -g TMUX_AGENTS`, so it is current in every pane.
     tmux set-environment -g TMUX_AGENTS "$CURRENT_DIR/main.sh"
 
-    tmux bind-key "$key_dashboard" run-shell "$CURRENT_DIR/main.sh agent_dashboard"
+    tmux bind-key "$key_dashboard" run-shell "$CURRENT_DIR/main.sh agent_dashboard '#{pane_id}'"
     tmux bind-key "$key_worktree" run-shell "$CURRENT_DIR/main.sh new_worktree"
 
     # Visiting an agent's pane clears its unread mark; fixed index so re-sourcing replaces instead of appending.

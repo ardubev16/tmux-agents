@@ -167,6 +167,17 @@ func TestListIsGroupedAndShowsNamesAndWhatNeedsYou(t *testing.T) {
 	}
 }
 
+func TestOpensOnTheFocusedAgent(t *testing.T) {
+	script, _ := fakeMain(t, "")
+	m := newDashboard(script)
+	m.send = func(tea.Msg) {}
+	m.focus = "%3"
+	m.Init()
+	if a := m.agent(); a == nil || a.pane != "%3" {
+		t.Errorf("highlighted %+v, want the focused pane %%3", a)
+	}
+}
+
 func TestChatShowsTheNewestAndLoadsOlderOnScroll(t *testing.T) {
 	m, _, _ := newModel(t, "")
 	press(m, "down")
