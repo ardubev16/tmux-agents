@@ -44,11 +44,15 @@ can render its chat. `TMUX_AGENTS` (the path to `main.sh`) comes from tmux's glo
 ~/.tmux/plugins/tmux-agents/integrations/install.sh install omp claude    # or: uninstall omp claude
 ```
 
-- **omp / pi**: links [`integrations/omp.ts`](integrations/omp.ts) into `~/.omp/agent/extensions/`.
+- **omp / pi**: links [`integrations/omp.ts`](integrations/omp.ts) into `~/.omp/agent/extensions/`. It also gives
+  the agent a `tmux_status` tool, and asks it in the system prompt to call it at the end of every turn.
 - **Claude Code**: merges [`integrations/claude-hooks.json`](integrations/claude-hooks.json) into
   `~/.claude/settings.json`, keeping your own hooks. A symlinked file (e.g. from Home Manager) is left alone.
-  Every hook runs `main.sh claude_hook`, which reads the event from stdin and decides what it means.
-- **Anything else**: call the commands above from the hooks your harness provides.
+  Every hook runs `main.sh claude_hook`, which reads the event from stdin and decides what it means. At session
+  start it tells the agent to report its status with `main.sh status` at the end of every turn; the install allows
+  that command, so it runs without asking you.
+- **Anything else**: call the commands above from the hooks your harness provides, and have the agent run
+  `"$TMUX_AGENTS" status '<doing>' '<needs>'` to fill the dashboard's context card.
 
 Both integrations follow plugin updates on their own: omp's is a link, and Claude Code's hooks only name the
 events. Re-run `install` when `claude-hooks.json` itself changes. Run `uninstall` before removing the plugin:
@@ -83,10 +87,10 @@ their pane. The project name (a repo and its worktrees) is in its color, which s
 on the same project stand out. The agent of the pane you opened the dashboard from is highlighted.
 
 Below the list, the highlighted agent's **context card** recalls what it is about without reading its chat: your
-note on it (`e`; it belongs to the pane, so it stays through `/clear` and new tasks), its plan (the latest todo list:
-how many items are done and the current one) and the start of its latest reply. The plan and reply come from its
-session file, since its last `/clear`. `→` shows the card in full in place of the list (every plan item, the whole
-reply; `j`/`k` scroll), `←` goes back.
+note on it (`e`; it belongs to the pane, so it stays through `/clear` and new tasks), what the agent says it is
+**doing** overall and **needs** from you (it reports both at the end of every turn; with how long ago), and where its
+branch stands (with the GitHub CLI: its pull request and CI). `→` shows the card in full in place of the list
+(`j`/`k` scroll), `←` goes back.
 
 On the right is the highlighted agent's chat, rendered from its session file: it wraps to the popup width and
 stays readable while the pane shows something else. Questions the agent asks you (omp's `ask`, Claude Code's

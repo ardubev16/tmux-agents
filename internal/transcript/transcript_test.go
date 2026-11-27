@@ -99,44 +99,6 @@ func TestOmpNewSessionWithoutMessagesIsEmptyNotNil(t *testing.T) {
 	}
 }
 
-func TestContextOmp(t *testing.T) {
-	todo := func(id, parent string, tasks ...m) []m {
-		return []m{
-			omp(id, parent, "assistant", m{"type": "toolCall", "id": "c" + id, "name": "todo", "arguments": m{"op": "init"}}),
-			{"type": "message", "id": id + "r", "parentId": id, "message": m{"role": "toolResult", "toolCallId": "c" + id,
-				"toolName": "todo", "content": []m{text("Remaining items")}, "details": m{"phases": []m{{"name": "A", "tasks": tasks}}}}},
-		}
-	}
-	entries := append([]m{omp("1", nil, "user", text("build it"))},
-		todo("2", "1", m{"content": "one", "status": "completed"}, m{"content": "two", "status": "in_progress"})...)
-	entries = append(entries, omp("3", "2r", "assistant", text("It works now."), text("Tests pass.")))
-	want := Context{Plan: []Todo{{"one", "completed"}, {"two", "in_progress"}}, Last: "Tests pass."}
-	if c := New(writeJSONL(t, "s.jsonl", entries...)).Context(); !reflect.DeepEqual(c, want) {
-		t.Errorf("got %+v\nwant %+v", c, want)
-	}
-
-	// After a /clear, the plan from before it is gone.
-	entries = append(entries, m{"type": "reset_boundary", "id": "4", "parentId": "3"}, omp("5", "4", "assistant", text("Fresh start.")))
-	want = Context{Last: "Fresh start."}
-	if c := New(writeJSONL(t, "s.jsonl", entries...)).Context(); !reflect.DeepEqual(c, want) {
-		t.Errorf("after /clear: got %+v\nwant %+v", c, want)
-	}
-}
-
-func TestContextClaude(t *testing.T) {
-	path := writeJSONL(t, "c.jsonl",
-		m{"type": "user", "uuid": "1", "message": m{"role": "user", "content": "build it"}},
-		m{"type": "assistant", "uuid": "2", "parentUuid": "1", "message": m{"role": "assistant", "content": []m{
-			{"type": "tool_use", "id": "t1", "name": "TodoWrite", "input": m{"todos": []m{{"content": "one", "status": "pending", "activeForm": "Doing one"}}}},
-		}}},
-		m{"type": "assistant", "uuid": "3", "parentUuid": "2", "message": m{"role": "assistant", "content": "Done."}},
-	)
-	want := Context{Plan: []Todo{{"one", "pending"}}, Last: "Done."}
-	if c := New(path).Context(); !reflect.DeepEqual(c, want) {
-		t.Errorf("got %+v\nwant %+v", c, want)
-	}
-}
-
 func TestClaude(t *testing.T) {
 	path := writeJSONL(t, "c.jsonl",
 		m{"type": "user", "uuid": "1", "parentUuid": nil, "message": m{"role": "user", "content": "hi\nthere"}},

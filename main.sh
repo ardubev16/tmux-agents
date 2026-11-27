@@ -41,6 +41,9 @@ declare -r socket_option='@tmux_agents_socket'
 declare -r unread_option='@tmux_agents_unread'
 declare -r since_option='@tmux_agents_since'
 declare -r note_option='@tmux_agents_note'
+declare -r doing_option='@tmux_agents_doing'
+declare -r needs_option='@tmux_agents_needs'
+declare -r status_at_option='@tmux_agents_status_at'
 
 function tmux_option() {
     local -r option=$(tmux show-option -gqv "$1")
@@ -54,7 +57,8 @@ function set_state() {
 
     if [[ $state == clear ]]; then
         local option
-        for option in "$state_option" "$transcript_option" "$socket_option" "$unread_option" "$since_option"; do
+        for option in "$state_option" "$transcript_option" "$socket_option" "$unread_option" "$since_option" \
+            "$doing_option" "$needs_option" "$status_at_option"; do
             tmux set-option -pu -t "$TMUX_PANE" "$option"
         done
     else
@@ -117,10 +121,11 @@ function notify() {
 
 # Called by agent hooks when a session starts or switches: <session file> [socket].
 # The session file lets the dashboard render the chat itself; the socket (omp) streams the
-# in-progress reply and shares the prompt draft.
+# in-progress reply and shares the prompt draft. Another session's status no longer applies.
 function set_session() {
     local -r transcript="$1" socket="${2:-}"
     [[ -n ${TMUX_PANE:-} && -n $transcript ]] || return 0
+    [[ $(tmux show-option -pqv -t "$TMUX_PANE" "$transcript_option") == "$transcript" ]] || set_status
     tmux set-option -p -t "$TMUX_PANE" "$transcript_option" "$transcript"
     if [[ -n $socket ]]; then
         tmux set-option -p -t "$TMUX_PANE" "$socket_option" "$socket"
@@ -129,13 +134,37 @@ function set_session() {
     fi
 }
 
+# The agent's own summary for the dashboard's context card, from inside its pane (omp's status tool, Claude Code
+# through its shell): [doing] [needs], what it is working on overall and what it needs from you; none clears it.
+function set_status() {
+    [[ -n ${TMUX_PANE:-} ]] || return 0
+    set_pane_text "$TMUX_PANE" "$doing_option" "${1:-}"
+    set_pane_text "$TMUX_PANE" "$needs_option" "${2:-}"
+    if [[ -n ${1:-}${2:-} ]]; then
+        tmux set-option -p -t "$TMUX_PANE" "$status_at_option" "$EPOCHSECONDS"
+    else
+        tmux set-option -pu -t "$TMUX_PANE" "$status_at_option"
+    fi
+}
+
+# What Claude Code adds to the agent's context at session start (omp's status tool carries it in its description).
+function status_instruction() {
+    echo "This session runs in tmux-agents, whose dashboard shows the user a status per agent. At the end of every" \
+        "turn, before your final reply, run: $(printf %q "$MAIN") status '<doing>' '<needs>' where <doing> is what" \
+        "you are working on overall (the goal, not the last step) and <needs> what you need from the user ('' if" \
+        "nothing), at most 12 words each."
+}
+
 # Every Claude Code hook (integrations/claude-hooks.json) runs this with the event as JSON on stdin, so what
 # each event means lives here and updates with the plugin; only the events and matchers live in the hooks.
 function claude_hook() {
     local event transcript
     IFS=$'\t' read -r event transcript < <(jq -r '[.hook_event_name, .transcript_path // ""] | @tsv')
     case $event in
-    SessionStart) set_session "$transcript" ;;
+    SessionStart)
+        set_session "$transcript"
+        jq -n --arg text "$(status_instruction)" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $text}}'
+        ;;
     UserPromptSubmit | PostToolUse) set_state working ;;
     PreToolUse | Notification) set_state blocked ;; # AskUserQuestion; permission and MCP input dialogs
     Stop) set_state "done" ;;
@@ -150,11 +179,12 @@ function seen() {
 
 # One agent per line (panes with a state, or a session reported but no prompt yet), blocked first, then unread
 # done, then idle, then working; within each, the one in its state the longest first: pane_id \t state \t target \t
-# command \t path \t transcript \t socket \t unread \t since (epoch seconds the state began) \t note
+# command \t path \t transcript \t socket \t unread \t since (epoch seconds the state began) \t note \t doing \t
+# needs \t status_at (epoch seconds of the agent's status)
 function list_agents() {
     local -r shell="$(basename "$(tmux show-option -gqv default-shell)")"
     # shortcut: an agent killed without its exit hook keeps its state until its pane is back at the shell prompt.
-    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}	#{$transcript_option}	#{$socket_option}	#{$unread_option}	#{$since_option}	#{$note_option}" |
+    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}	#{$transcript_option}	#{$socket_option}	#{$unread_option}	#{$since_option}	#{$note_option}	#{$doing_option}	#{$needs_option}	#{$status_at_option}" |
         awk -F '\t' -v shell="$shell" '
             BEGIN { OFS = "\t"; rank["blocked"] = 0; rank["done"] = 2; rank[""] = 2; rank["working"] = 3 }
             ($2 != "" || $6 != "") && $4 != shell {
@@ -176,20 +206,22 @@ function status_bar() {
         END { printf "%s", counter(d, "○", n["done"]) counter(w, "⦿", n["working"]) counter(b, "●", n["blocked"]) }'
 }
 
-# Your note on the agent in pane $1 (the dashboard shows it in the agent's context card); empty text removes it. It
-# belongs to the pane, so it stays through /clear, new sessions and agent restarts. Tabs and newlines become spaces:
-# list_agents' lines are tab-separated.
-function set_note() {
-    local -r pane="$1"
-    local text="${2:-}"
+# Sets pane option $2 of pane $1 to $3 on one line (list_agents' lines are tab-separated); blank text unsets it.
+function set_pane_text() {
+    local -r pane="$1" option="$2"
+    local text="${3:-}"
     text=${text//$'\t'/ }
     text=${text//$'\n'/ }
     if [[ -z ${text// /} ]]; then
-        tmux set-option -pu -t "$pane" "$note_option"
+        tmux set-option -pu -t "$pane" "$option"
     else
-        tmux set-option -p -t "$pane" "$note_option" "$text"
+        tmux set-option -p -t "$pane" "$option" "$text"
     fi
 }
+
+# Your note on the agent in pane $1 (the dashboard shows it in the agent's context card); empty text removes it. It
+# belongs to the pane, so it stays through /clear, new sessions and agent restarts.
+function set_note() { set_pane_text "$1" "$note_option" "${2:-}"; }
 
 # $1: the pane the popup opens over, which the dashboard highlights when it runs an agent.
 function agent_dashboard() {
@@ -426,6 +458,7 @@ list_agents) list_agents "$@" ;;
 switch_agent) switch_agent "$@" ;;
 close_agent) close_agent "$@" ;;
 seen) seen "$@" ;;
+status) set_status "$@" ;;
 set_note) set_note "$@" ;;
 reply_agent) reply_agent "$@" ;;
 new_worktree) new_worktree "$@" ;;

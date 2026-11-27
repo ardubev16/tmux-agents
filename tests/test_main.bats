@@ -55,6 +55,19 @@ EOF
     grep -qx 'tmux set-option -pu -t %1 @tmux_agents_note' "$LOG"
 }
 
+@test "status: the agent's doing and needs with when it said so; none clears it, as does a new session" {
+    TMUX_PANE=%1 run "$MAIN" status 'fixing the bug' $'pick\ta name'
+    [ "$status" -eq 0 ]
+    grep -qx 'tmux set-option -p -t %1 @tmux_agents_doing fixing the bug' "$LOG"
+    grep -qx 'tmux set-option -p -t %1 @tmux_agents_needs pick a name' "$LOG"
+    grep -q 'tmux set-option -p -t %1 @tmux_agents_status_at [0-9]' "$LOG"
+
+    : >"$LOG"
+    TMUX_PANE=%1 run "$MAIN" session /new.jsonl # the stub reports no session before it
+    grep -qx 'tmux set-option -pu -t %1 @tmux_agents_doing' "$LOG"
+    grep -qx 'tmux set-option -pu -t %1 @tmux_agents_status_at' "$LOG"
+}
+
 @test "status_bar: only counters above 0 by default, every counter with hide_zero off" {
     printf '%s\t%s\t%s\t%s\t%s\t\t\t\t\n' %1 working s:1.0 omp /a %2 working s:2.0 omp /b >"$PANES"
     run "$MAIN" status_bar green yellow red off
@@ -120,6 +133,9 @@ EOF
             grep -q "set-option -p -t %1 @tmux_agents_state ${case#*:}" "$LOG"
         fi
     done
+    # At session start Claude Code is told how to report its status.
+    run bash -c 'printf "{\"hook_event_name\":\"SessionStart\",\"transcript_path\":\"/t.jsonl\"}" | TMUX_PANE=%1 "$0" claude_hook' "$MAIN"
+    [[ $(jq -r .hookSpecificOutput.additionalContext <<<"$output") == *"main.sh status '<doing>' '<needs>'"* ]]
 }
 
 @test "dashboard: downloads the release for this version and platform once, then runs it" {

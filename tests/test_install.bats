@@ -19,6 +19,9 @@ EOF
     ours=$(jq -c '.hooks.Stop[0].hooks[0].command' "$INTEGRATIONS/claude-hooks.json")
     [ "$output" = "[\"sonnet\",[\"mine.sh\",$ours],1]" ]
     [ -L "$HOME/.omp/agent/extensions/tmux-agents.ts" ]
+    # Claude Code may run the status command without asking, once.
+    rule="Bash($(realpath "$INTEGRATIONS/../main.sh") status:*)"
+    [ "$(jq --arg rule "$rule" '[.permissions.allow[] | select(. == $rule)] | length' "$HOME/.claude/settings.json")" = 1 ]
 }
 
 @test "uninstall restores the original settings and removes only our link" {

@@ -39,14 +39,17 @@ func TestProjectsKeepTheirColor(t *testing.T) {
 	}
 }
 
-func TestCardShowsYourNoteAndTheLatestReplyAndEditsTheNote(t *testing.T) {
+func TestCardShowsYourNoteAndTheAgentsStatusAndEditsTheNote(t *testing.T) {
 	m, _, calls := newModel(t, "")
-	press(m, "2") // the agent with a session file and a note
+	press(m, "2") // the agent with a note and a status
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"note   remember this", "last   answer 99"} {
+	for _, want := range []string{"note   remember this", "doing  fixing the bug", "needs  pick a name"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the card lacks %q:\n%s", want, view)
 		}
+	}
+	if line := view[strings.Index(view, "doing  fixing the bug"):]; !strings.Contains(line[:strings.Index(line, "\n")], " 2m") {
+		t.Errorf("the status line does not say how old it is:\n%s", view)
 	}
 	press(m, "e", "!", "enter")
 	if !contains(calls(), "set_note %2 remember this!") || m.noting {
@@ -58,12 +61,26 @@ func TestRightShowsTheCardInFullInPlaceOfTheList(t *testing.T) {
 	m, _, _ := newModel(t, "")
 	press(m, "2", "right")
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "Latest reply") || !strings.Contains(view, "remember this") || strings.Contains(view, "Waiting") {
+	if !strings.Contains(view, "Needs from you") || !strings.Contains(view, "remember this") || strings.Contains(view, "Waiting") {
 		t.Fatalf("→ did not replace the list with the full card:\n%s", view)
 	}
 	press(m, "j", "left")
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "Waiting") || m.selected != 1 {
 		t.Errorf("← did not go back to the list with the same agent highlighted:\n%s", view)
+	}
+}
+
+func TestParsePR(t *testing.T) {
+	for _, c := range []struct{ json, pr, ci string }{
+		{`{"number":42,"state":"OPEN","isDraft":false,"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"},{"state":"SUCCESS"}]}`, "#42 open", "✓"},
+		{`{"number":42,"state":"OPEN","isDraft":true,"statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":""},{"status":"COMPLETED","conclusion":"SUCCESS"}]}`, "#42 draft", "…"},
+		{`{"number":7,"state":"MERGED","statusCheckRollup":[{"status":"IN_PROGRESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]}`, "#7 merged", "✗"},
+		{`{"number":7,"state":"CLOSED","statusCheckRollup":[]}`, "#7 closed", ""},
+		{`not json`, "", ""},
+	} {
+		if pr, ci := parsePR([]byte(c.json)); pr != c.pr || ci != c.ci {
+			t.Errorf("%s: got %q %q, want %q %q", c.json, pr, ci, c.pr, c.ci)
+		}
 	}
 }
 
@@ -237,7 +254,7 @@ printf '%%s\n' "$*" >>'%[1]s'
 case "$1" in
 list_agents)
     printf '%%%%1\tblocked\ts:1.0\tclaude\t~/a\t\t\t\t%%s\n' "$(( $(date +%%s) - 180 ))"
-    printf '%%%%2\tworking\ts:2.0\tomp\t%[4]s\t%[2]s\t%[3]s\t\t%%s\tremember this\n' "$(( $(date +%%s) - 180 ))"
+    printf '%%%%2\tworking\ts:2.0\tomp\t%[4]s\t%[2]s\t%[3]s\t\t%%s\tremember this\tfixing the bug\tpick a name\t%%s\n' "$(( $(date +%%s) - 180 ))" "$(( $(date +%%s) - 120 ))"
     grep -q '^close_agent %%3' '%[1]s' || printf '%%%%3\tdone\ts:3.0\tomp\t~/c\t\t\t1\t%%s\n' "$(( $(date +%%s) - 7200 ))" ;;
 esac
 `, log, session, socket, dir)), 0o755)

@@ -54,10 +54,12 @@ var (
 	border  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Border))
 	warning = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Blocked))
 	busy    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Working))
-	// The context card's: muted labels, your note in the heading color, finished plan items in the done color.
-	muted     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Muted))
-	noteStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.H1)).Bold(true)
-	doneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Done))
+	// The context card's: muted labels, your note in the heading color, the branch in the link color, a passing CI
+	// in the done color.
+	branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Link))
+	muted       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Muted))
+	noteStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.H1)).Bold(true)
+	doneStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Done))
 )
 
 // Agent list sections, in list_agents' order; empty ones are not shown. No state: a session opened but not prompted.
@@ -154,7 +156,9 @@ func idleColor(idle time.Duration) lipgloss.Color {
 
 type agent struct {
 	pane, state, target, command, path, transcript, socket, unread, title, project, note string
+	doing, needs                                                                         string         // the agent's own status
 	since                                                                                int64          // epoch seconds the state began, 0 = unknown
+	statusAt                                                                             int64          // epoch seconds of its status, 0 = none
 	color                                                                                lipgloss.Color // its project's
 }
 
@@ -165,8 +169,11 @@ type (
 	tickMsg    struct{}
 	termMsg    struct{} // lazygit's screen changed or it exited
 	agentsMsg  []agent  // list_agents, read in the background
-	changesMsg struct{ dir, text string }
-	liveMsg    struct {
+	changesMsg struct {
+		dir, text string
+		git       gitState
+	}
+	liveMsg struct {
 		gen  int
 		live *agentsocket.Live // nil: the subscription ended
 	}
@@ -205,7 +212,7 @@ type model struct {
 	transcripts map[string]*transcript.Transcript // by path, so polls only parse appended lines
 	wanted      int                               // newest blocks the chat shows; grows on scrolling up
 	shown       string                            // what the chat shows, to skip identical re-renders
-	context     transcript.Context                // the highlighted agent's, for its card
+	git         gitState                          // where the highlighted agent's work stands, for its card
 
 	live    agentsocket.Live // latest snapshot from the highlighted agent's socket
 	liveGen int
@@ -253,8 +260,10 @@ func loadAgents(mainSh string) []agent {
 		if line == "" {
 			continue
 		}
-		f := append(strings.Split(line, "\t"), make([]string, 10)...)
-		a := agent{pane: f[0], state: f[1], target: f[2], command: f[3], path: f[4], transcript: f[5], socket: f[6], unread: f[7], note: f[9]}
+		f := append(strings.Split(line, "\t"), make([]string, 13)...)
+		a := agent{pane: f[0], state: f[1], target: f[2], command: f[3], path: f[4], transcript: f[5], socket: f[6], unread: f[7],
+			note: f[9], doing: f[10], needs: f[11]}
+		a.statusAt, _ = strconv.ParseInt(f[12], 10, 64)
 		a.since, _ = strconv.ParseInt(f[8], 10, 64)
 		a.project = project(a.path)
 		if a.transcript != "" {
@@ -286,7 +295,7 @@ func (m *model) fetchChanges() tea.Cmd {
 	if dir == "" {
 		return nil
 	}
-	return func() tea.Msg { return changesMsg{dir, changes(dir)} }
+	return func() tea.Msg { return changesMsg{dir, changes(dir), gitStatus(dir)} }
 }
 
 // applyFilter lists the agents matching the filter, keeping the highlighted one when it still matches.
@@ -370,7 +379,7 @@ func (m *model) agentChanged() {
 	if a == nil || a.pane != m.closing {
 		m.closing = ""
 	}
-	m.changes = ""
+	m.changes, m.git = "", gitState{}
 	m.wantChanges()
 	if m.stop != nil {
 		close(m.stop)
@@ -407,12 +416,8 @@ func (m *model) pollChat(force bool) {
 	m.shown = key
 	// Not nil: nil would keep the blocks shown before, i.e. the previously selected agent's chat.
 	blocks, more := []transcript.Block{}, false
-	m.context = transcript.Context{}
 	if exists {
-		t := m.transcript(a.transcript)
-		blocks, more = t.Blocks(m.wanted)
-		// shortcut: the first call per session file reads all of it; keep its result per file if switching gets slow.
-		m.context = t.Context()
+		blocks, more = m.transcript(a.transcript).Blocks(m.wanted)
 	}
 	m.chat.Update(blocks, m.liveBlocks(), m.writing(), more)
 }
@@ -489,7 +494,7 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		}
 	case changesMsg:
 		if a := m.agent(); a != nil && a.path == msg.dir {
-			m.changes = msg.text
+			m.changes, m.git = msg.text, msg.git
 		}
 	case liveMsg:
 		if msg.gen != m.liveGen {
@@ -580,7 +585,7 @@ var keybindings = []menuRow{
 	{"↑/k ↓/j", "previous/next agent", "", ""},
 	{"1-9", "agent by number", "", "Numbers follow the visible list: with a filter, they count the matching agents."},
 	{"n", "next needing you", "", "Highlights the next agent waiting for your input or finished while you were away, wrapping around. Each section lists the one waiting longest first."},
-	{"→/l ←/h", "context card", "", "→ shows the highlighted agent's context card in full in place of the list: your note, every item of its plan and its whole latest reply. j/k scroll it, ← goes back to the list."},
+	{"→/l ←/h", "context card", "", "→ shows the highlighted agent's context card in full in place of the list: your note, what the agent says it is doing and needs from you, and where its branch stands. j/k scroll it, ← goes back to the list."},
 	{"click", "highlight/expand", "", "In the list, highlights the agent. In the chat, expands or folds a thought or tool call to show all of it."},
 	{"enter", "switch to agent", "", ""},
 	{"ctrl+r", "reply", "", "Opens a reply box below the chat: enter sends it, ctrl+j adds a newline. For omp agents it starts from your half-typed prompt, and esc keeps what you wrote as that draft."},
@@ -940,65 +945,35 @@ func (m *model) closeReply() {
 
 const cardLabel = 8 // the context card's label column
 
-// planSummary is how many items of the plan are done and the one the agent is on (the first in progress, else the
-// first not done; "all done" when none is left).
-func planSummary(plan []transcript.Todo) (done int, current string) {
-	active := false
-	for _, t := range plan {
-		switch {
-		case t.Status == "completed":
-			done++
-		case t.Status == "in_progress" && !active:
-			current, active = t.Text, true
-		case current == "":
-			current = t.Text
-		}
-	}
-	if current == "" {
-		current = "all done"
-	}
-	return done, current
-}
-
-// plainReply is a reply as plain text: Markdown's bold and code markers dropped.
-func plainReply(md string) string { return strings.NewReplacer("**", "", "`", "").Replace(md) }
-
-// card is the highlighted agent's context card, at the bottom of the agent list: your note, then what its session
-// file says it is doing (its plan, the start of its latest reply), to recall what the agent is about without reading
-// the chat; → shows it in full (cardDetails). Empty when there is nothing to show.
+// card is the highlighted agent's context card, at the bottom of the agent list, to recall what the agent is about
+// without reading its chat: your note, its own status (what it is doing, what it needs from you; it reports them at
+// the end of each turn), and where its branch stands. → shows it in full (cardDetails). Empty with nothing to show.
 func (m *model) card() []string {
 	a := m.agent()
 	if a == nil {
 		return nil
 	}
-	width, c := m.listWidth(), m.context
+	width := m.listWidth()
 	label := func(name string) string { return muted.Render(fmt.Sprintf(" %-*s", cardLabel-1, name)) }
 	var lines []string
-	add := func(name, text string) { lines = append(lines, ansi.Truncate(label(name)+text, width, "…")) }
+	add := func(name, text, right string) {
+		line := ansi.Truncate(label(name)+text, max(0, width-ansi.StringWidth(right)), "…")
+		lines = append(lines, line+strings.Repeat(" ", max(0, width-ansi.StringWidth(line)-ansi.StringWidth(right)))+right)
+	}
 	switch {
 	case m.noting:
 		lines = append(lines, label("note")+m.note.View())
 	case a.note != "":
-		add("note", noteStyle.Render(a.note))
+		add("note", noteStyle.Render(a.note), "")
 	}
-	if len(c.Plan) > 0 {
-		done, current := planSummary(c.Plan)
-		add("plan", doneStyle.Render(fmt.Sprintf("%d/%d", done, len(c.Plan)))+" "+bold.Render(current))
+	if a.doing != "" {
+		add("doing", bold.Render(a.doing), statusAge(a))
 	}
-	if c.Last != "" {
-		// Its first three lines: the reply usually opens with the outcome.
-		flat := strings.Join(strings.Fields(plainReply(c.Last)), " ")
-		wrapped := strings.Split(lipgloss.NewStyle().Width(max(1, width-cardLabel)).Render(flat), "\n")
-		if len(wrapped) > 3 {
-			wrapped = append(wrapped[:2], strings.TrimRight(wrapped[2], " ")+"…")
-		}
-		for i, line := range wrapped {
-			name := ""
-			if i == 0 {
-				name = "last"
-			}
-			add(name, line)
-		}
+	if a.needs != "" {
+		add("needs", busy.Render(a.needs), "")
+	}
+	if m.git.branch != "" {
+		add("git", m.git.render(), "")
 	}
 	if len(lines) == 0 {
 		return nil
@@ -1009,64 +984,49 @@ func (m *model) card() []string {
 	return lines[:min(len(lines), max(0, m.bodyHeight()-3))] // the list keeps a few rows in a short popup
 }
 
-// cardDetails is the context card in full, shown in place of the agent list (→): your note, every plan item and the
-// agent's whole latest reply, wrapped to the sidebar.
+// statusAge is how long ago the agent reported its status, dimmed, for the end of its card line.
+func statusAge(a *agent) string {
+	if a.statusAt == 0 {
+		return ""
+	}
+	return dim.Render(" " + ago(a.statusAt, time.Now()))
+}
+
+// cardDetails is the context card in full, shown in place of the agent list (→): your note and the agent's status
+// wrapped to the sidebar, and where its branch stands.
 func (m *model) cardDetails() []string {
 	a := m.agent()
 	if a == nil {
 		return nil
 	}
-	width, c := m.listWidth(), m.context
-	wrap := func(text string, indent int) []string {
-		return strings.Split(lipgloss.NewStyle().Width(max(1, width-indent)).Render(text), "\n")
-	}
 	var lines []string
-	section := func(title string) {
+	section := func(title string, style lipgloss.Style, text string) {
 		if len(lines) > 0 {
 			lines = append(lines, "")
 		}
 		lines = append(lines, bold.Render(" "+title))
+		for _, line := range strings.Split(lipgloss.NewStyle().Width(max(1, m.listWidth()-1)).Render(text), "\n") {
+			lines = append(lines, " "+style.Render(line))
+		}
 	}
 	switch {
 	case m.noting:
-		section("Note")
-		lines = append(lines, " "+m.note.View())
+		lines = append(lines, bold.Render(" Note"), " "+m.note.View())
 	case a.note != "":
-		section("Note")
-		for _, line := range wrap(a.note, 1) {
-			lines = append(lines, " "+noteStyle.Render(line))
-		}
+		section("Note", noteStyle, a.note)
 	}
-	if len(c.Plan) > 0 {
-		done, _ := planSummary(c.Plan)
-		section(fmt.Sprintf("Plan %s", doneStyle.Render(fmt.Sprintf("%d/%d", done, len(c.Plan)))))
-		for _, t := range c.Plan {
-			mark, style := "·", lipgloss.NewStyle()
-			switch t.Status {
-			case "completed":
-				mark, style = "✓", dim
-			case "in_progress":
-				mark, style = "▸", bold
-			}
-			for i, line := range wrap(t.Text, 3) {
-				prefix := "   "
-				if i == 0 {
-					prefix = " " + map[string]lipgloss.Style{"✓": doneStyle, "▸": busy, "·": muted}[mark].Render(mark) + " "
-				}
-				lines = append(lines, prefix+style.Render(line))
-			}
-		}
+	if a.doing != "" {
+		section("Doing"+statusAge(a), bold, a.doing)
 	}
-	if c.Last != "" {
-		section("Latest reply")
-		for _, paragraph := range strings.Split(plainReply(c.Last), "\n") {
-			for _, line := range wrap(paragraph, 1) {
-				lines = append(lines, " "+line)
-			}
-		}
+	if a.needs != "" {
+		section("Needs from you", busy, a.needs)
 	}
-	if len(lines) == 0 {
-		lines = []string{dim.Render(" nothing recorded for this agent yet")}
+	if a.doing == "" && a.needs == "" {
+		section("Status", dim, "none yet: the agent reports it at the end of its turn (omp's tmux_status tool; "+
+			"Claude Code gets the instruction at session start)")
+	}
+	if m.git.branch != "" {
+		lines = append(lines, "", bold.Render(" Git"), " "+m.git.render())
 	}
 	return lines
 }

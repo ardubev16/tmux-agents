@@ -9,11 +9,19 @@ OMP_EXTENSION="$HOME/.omp/agent/extensions/tmux-agents.ts"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 USAGE="Usage: $0 install|uninstall omp|claude..."
 
-# Drops every hook entry that calls "$TMUX_AGENTS" (state/session), then any event left empty by that.
+# Drops every hook entry that calls "$TMUX_AGENTS" (state/session), then any event left empty by that; and the
+# permission for the agent's status command (main.sh status), then permissions left empty by that.
 # shellcheck disable=SC2016 # $TMUX_AGENTS is matched literally.
-STRIP='def strip: if .hooks then .hooks |= (
+STRIP='def strip: (if .hooks then .hooks |= (
     with_entries(.value |= map(select(any(.hooks[]?; (.command // "") | contains("\"$TMUX_AGENTS\" ")) | not)))
-    | with_entries(select(.value | length > 0))) else . end;'
+    | with_entries(select(.value | length > 0))) else . end)
+  | if .permissions.allow then
+      .permissions.allow |= map(select(test("^Bash\\(.*main\\.sh status:\\*\\)$") | not))
+      | if .permissions.allow == [] then del(.permissions.allow) else . end
+      | if .permissions == {} then del(.permissions) else . end
+    else . end;'
+# Lets Claude Code report its status (main.sh status_instruction) without asking you each time.
+STATUS_RULE="Bash($(printf %q "$(realpath "$INTEGRATIONS_DIR/../main.sh")") status:*)"
 
 function write_claude_settings() {
     local -r filter="$1"
@@ -26,7 +34,7 @@ function write_claude_settings() {
     [[ -f $CLAUDE_SETTINGS ]] && current=$(<"$CLAUDE_SETTINGS")
 
     local updated
-    updated=$(jq --slurpfile ours "$INTEGRATIONS_DIR/claude-hooks.json" "$STRIP $filter" <<<"$current")
+    updated=$(jq --slurpfile ours "$INTEGRATIONS_DIR/claude-hooks.json" --arg rule "$STATUS_RULE" "$STRIP $filter" <<<"$current")
     mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
     # Write in place (not mv) to keep the file's permissions.
     printf '%s\n' "$updated" >"$CLAUDE_SETTINGS"
@@ -40,8 +48,9 @@ function install_omp() {
 
 function install_claude() {
     # shellcheck disable=SC2016 # $ours and $e are jq variables
-    write_claude_settings 'strip | .hooks = (reduce ($ours[0].hooks | to_entries[]) as $e (.hooks // {}; .[$e.key] += $e.value))'
-    echo "claude: hooks added to $CLAUDE_SETTINGS"
+    write_claude_settings 'strip | .hooks = (reduce ($ours[0].hooks | to_entries[]) as $e (.hooks // {}; .[$e.key] += $e.value))
+        | .permissions.allow += [$rule]'
+    echo "claude: hooks and the status command's permission added to $CLAUDE_SETTINGS"
 }
 
 function uninstall_omp() {
