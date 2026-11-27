@@ -39,6 +39,21 @@ func TestProjectsKeepTheirColor(t *testing.T) {
 	}
 }
 
+func TestCardShowsYourNoteAndTheLatestReplyAndEditsTheNote(t *testing.T) {
+	m, _, calls := newModel(t, "")
+	press(m, "2") // the agent with a session file and a note
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"note   remember this", "last   answer 99"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the card lacks %q:\n%s", want, view)
+		}
+	}
+	press(m, "e", "!", "enter")
+	if !contains(calls(), "set_note %2 remember this!") || m.noting {
+		t.Errorf("enter did not save the edited note: %q", calls())
+	}
+}
+
 func TestNumbersHighlightAgents(t *testing.T) {
 	m, _, _ := newModel(t, "")
 	press(m, "3")
@@ -209,7 +224,7 @@ printf '%%s\n' "$*" >>'%[1]s'
 case "$1" in
 list_agents)
     printf '%%%%1\tblocked\ts:1.0\tclaude\t~/a\t\t\t\t%%s\n' "$(( $(date +%%s) - 180 ))"
-    printf '%%%%2\tworking\ts:2.0\tomp\t%[4]s\t%[2]s\t%[3]s\t\t%%s\n' "$(( $(date +%%s) - 180 ))"
+    printf '%%%%2\tworking\ts:2.0\tomp\t%[4]s\t%[2]s\t%[3]s\t\t%%s\tremember this\n' "$(( $(date +%%s) - 180 ))"
     grep -q '^close_agent %%3' '%[1]s' || printf '%%%%3\tdone\ts:3.0\tomp\t~/c\t\t\t1\t%%s\n' "$(( $(date +%%s) - 7200 ))" ;;
 esac
 `, log, session, socket, dir)), 0o755)

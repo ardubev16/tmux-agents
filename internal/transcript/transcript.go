@@ -69,6 +69,8 @@ type entry struct {
 		Role       string          `json:"role"`
 		Content    json.RawMessage `json:"content"`    // a string or a list of parts
 		ToolCallID string          `json:"toolCallId"` // omp toolResult
+		ToolName   string          `json:"toolName"`   // omp toolResult
+		Details    json.RawMessage `json:"details"`    // omp toolResult: e.g. the todo tool's whole list
 	} `json:"message"`
 }
 

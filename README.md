@@ -82,6 +82,11 @@ finished while you were away are marked **finished** (and listed first among the
 their pane. The project name (a repo and its worktrees) is in its color, which stays the same, so agents working
 on the same project stand out. The agent of the pane you opened the dashboard from is highlighted.
 
+Below the list, the highlighted agent's **context card** recalls what it is about without reading its chat: your
+note on it (`e`; it belongs to the pane, so it stays through `/clear` and new tasks), its plan (the latest todo list:
+how many items are done and the current one), its two latest commits, the files it edited (most recent first) and
+the start of its latest reply. All but the note come from its session file, since its last `/clear`.
+
 On the right is the highlighted agent's chat, rendered from its session file: it wraps to the popup width and
 stays readable while the pane shows something else. Questions the agent asks you (omp's `ask`, Claude Code's
 `AskUserQuestion`) appear with their choices, without the answers the agent prefilled. Your prompts show in a
@@ -97,6 +102,7 @@ header shows the agent's uncommitted changes to tracked files (`3 files +40 −1
 | `Enter` | Switch to the agent's pane |
 | `Ctrl-r` | Reply (see below) |
 | `p` | List the tasks you gave the agent in this session: when you sent each and how long it worked on it (messages sent while it worked count toward its task); `Enter` scrolls the chat to one |
+| `e` | Edit your note on the agent, shown in its context card; empty removes it |
 | `/` | Fuzzy-filter the list by name, pane or command; `Enter` keeps the filter, `Esc` clears it |
 | `Tab` | Run lazygit in the agent's folder in place of the chat; keys and mouse go to it until you quit it |
 | `PgUp`/`PgDn`, wheel | Scroll the chat; scrolling to the top loads older messages |

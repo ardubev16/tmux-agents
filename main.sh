@@ -40,6 +40,7 @@ declare -r transcript_option='@tmux_agents_transcript'
 declare -r socket_option='@tmux_agents_socket'
 declare -r unread_option='@tmux_agents_unread'
 declare -r since_option='@tmux_agents_since'
+declare -r note_option='@tmux_agents_note'
 
 function tmux_option() {
     local -r option=$(tmux show-option -gqv "$1")
@@ -149,11 +150,11 @@ function seen() {
 
 # One agent per line (panes with a state, or a session reported but no prompt yet), blocked first, then unread
 # done, then idle, then working; within each, the one in its state the longest first: pane_id \t state \t target \t
-# command \t path \t transcript \t socket \t unread \t since (epoch seconds the state began)
+# command \t path \t transcript \t socket \t unread \t since (epoch seconds the state began) \t note
 function list_agents() {
     local -r shell="$(basename "$(tmux show-option -gqv default-shell)")"
     # shortcut: an agent killed without its exit hook keeps its state until its pane is back at the shell prompt.
-    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}	#{$transcript_option}	#{$socket_option}	#{$unread_option}	#{$since_option}" |
+    tmux list-panes -a -F "#{pane_id}	#{$state_option}	#{session_name}:#{window_index}.#{pane_index}	#{pane_current_command}	#{pane_current_path}	#{$transcript_option}	#{$socket_option}	#{$unread_option}	#{$since_option}	#{$note_option}" |
         awk -F '\t' -v shell="$shell" '
             BEGIN { OFS = "\t"; rank["blocked"] = 0; rank["done"] = 2; rank[""] = 2; rank["working"] = 3 }
             ($2 != "" || $6 != "") && $4 != shell {
@@ -173,6 +174,21 @@ function status_bar() {
         }
         { n[$2]++ }
         END { printf "%s", counter(d, "○", n["done"]) counter(w, "⦿", n["working"]) counter(b, "●", n["blocked"]) }'
+}
+
+# Your note on the agent in pane $1 (the dashboard shows it in the agent's context card); empty text removes it. It
+# belongs to the pane, so it stays through /clear, new sessions and agent restarts. Tabs and newlines become spaces:
+# list_agents' lines are tab-separated.
+function set_note() {
+    local -r pane="$1"
+    local text="${2:-}"
+    text=${text//$'\t'/ }
+    text=${text//$'\n'/ }
+    if [[ -z ${text// /} ]]; then
+        tmux set-option -pu -t "$pane" "$note_option"
+    else
+        tmux set-option -p -t "$pane" "$note_option" "$text"
+    fi
 }
 
 # $1: the pane the popup opens over, which the dashboard highlights when it runs an agent.
@@ -410,6 +426,7 @@ list_agents) list_agents "$@" ;;
 switch_agent) switch_agent "$@" ;;
 close_agent) close_agent "$@" ;;
 seen) seen "$@" ;;
+set_note) set_note "$@" ;;
 reply_agent) reply_agent "$@" ;;
 new_worktree) new_worktree "$@" ;;
 pick_worktree) pick_worktree "$@" ;;

@@ -47,6 +47,14 @@ EOF
     [ "$(cut -f1 <<<"$output" | tr '\n' ' ')" = "%2 %1 %4 %3 " ]
 }
 
+@test "set_note: tabs and newlines become spaces, an empty note is removed" {
+    run "$MAIN" set_note %1 $'wait for\tthe API\ndecision'
+    [ "$status" -eq 0 ]
+    grep -qx 'tmux set-option -p -t %1 @tmux_agents_note wait for the API decision' "$LOG"
+    run "$MAIN" set_note %1 '  '
+    grep -qx 'tmux set-option -pu -t %1 @tmux_agents_note' "$LOG"
+}
+
 @test "status_bar: only counters above 0 by default, every counter with hide_zero off" {
     printf '%s\t%s\t%s\t%s\t%s\t\t\t\t\n' %1 working s:1.0 omp /a %2 working s:2.0 omp /b >"$PANES"
     run "$MAIN" status_bar green yellow red off

@@ -149,9 +149,9 @@ func idleColor(idle time.Duration) lipgloss.Color {
 }
 
 type agent struct {
-	pane, state, target, command, path, transcript, socket, unread, title, project string
-	since                                                                          int64          // epoch seconds the state began, 0 = unknown
-	color                                                                          lipgloss.Color // its project's
+	pane, state, target, command, path, transcript, socket, unread, title, project, note string
+	since                                                                                int64          // epoch seconds the state began, 0 = unknown
+	color                                                                                lipgloss.Color // its project's
 }
 
 // A blocked agent shows a dialog, so a reply answers it instead of touching the draft.
@@ -189,12 +189,16 @@ type model struct {
 	filtering bool
 	filter    textinput.Model
 
+	noting bool // editing the highlighted agent's note, in its context card
+	note   textinput.Model
+
 	lazygit *term.Term // shown in place of the chat while it runs; gets every key
 
 	chat        chat.Chat
 	transcripts map[string]*transcript.Transcript // by path, so polls only parse appended lines
 	wanted      int                               // newest blocks the chat shows; grows on scrolling up
 	shown       string                            // what the chat shows, to skip identical re-renders
+	context     transcript.Context                // the highlighted agent's, for its card
 
 	live    agentsocket.Live // latest snapshot from the highlighted agent's socket
 	liveGen int
@@ -242,8 +246,8 @@ func loadAgents(mainSh string) []agent {
 		if line == "" {
 			continue
 		}
-		f := append(strings.Split(line, "\t"), make([]string, 9)...)
-		a := agent{pane: f[0], state: f[1], target: f[2], command: f[3], path: f[4], transcript: f[5], socket: f[6], unread: f[7]}
+		f := append(strings.Split(line, "\t"), make([]string, 10)...)
+		a := agent{pane: f[0], state: f[1], target: f[2], command: f[3], path: f[4], transcript: f[5], socket: f[6], unread: f[7], note: f[9]}
 		a.since, _ = strconv.ParseInt(f[8], 10, 64)
 		a.project = project(a.path)
 		if a.transcript != "" {
@@ -365,7 +369,7 @@ func (m *model) agentChanged() {
 		close(m.stop)
 		m.stop = nil
 	}
-	m.live, m.wanted, m.menu = agentsocket.Live{}, chatBlocks, nil
+	m.live, m.wanted, m.menu, m.noting = agentsocket.Live{}, chatBlocks, nil, false
 	m.liveGen++
 	if a != nil && a.socket != "" {
 		m.stop = make(chan struct{})
@@ -396,8 +400,12 @@ func (m *model) pollChat(force bool) {
 	m.shown = key
 	// Not nil: nil would keep the blocks shown before, i.e. the previously selected agent's chat.
 	blocks, more := []transcript.Block{}, false
+	m.context = transcript.Context{}
 	if exists {
-		blocks, more = m.transcript(a.transcript).Blocks(m.wanted)
+		t := m.transcript(a.transcript)
+		blocks, more = t.Blocks(m.wanted)
+		// shortcut: the first call per session file reads all of it; keep its result per file if switching gets slow.
+		m.context = t.Context()
 	}
 	m.chat.Update(blocks, m.liveBlocks(), m.writing(), more)
 }
@@ -509,6 +517,8 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			return m.replyKey(msg)
 		case m.filtering:
 			return m.filterKey(msg)
+		case m.noting:
+			return m.noteKey(msg)
 		}
 		return m.key(msg)
 	}
@@ -534,7 +544,7 @@ func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
 			return nil
 		}
 		if msg.X < m.listWidth() {
-			if _, owners := m.listRows(); m.listTop+msg.Y < len(owners) && owners[m.listTop+msg.Y] >= 0 {
+			if _, owners := m.listRows(); msg.Y < m.listHeight() && m.listTop+msg.Y < len(owners) && owners[m.listTop+msg.Y] >= 0 {
 				m.selected = owners[m.listTop+msg.Y]
 				m.agentChanged()
 			}
@@ -567,6 +577,7 @@ var keybindings = []menuRow{
 	{"enter", "switch to agent", "", ""},
 	{"ctrl+r", "reply", "", "Opens a reply box below the chat: enter sends it, ctrl+j adds a newline. For omp agents it starts from your half-typed prompt, and esc keeps what you wrote as that draft."},
 	{"p", "prompts", "", "Lists the tasks you gave the agent in this session, oldest first: when you sent each and how long the agent worked on it. Prompts sent while it worked count toward the task it was on. enter scrolls the chat to it."},
+	{"e", "note", "", "Edits your own line about the agent, shown in its context card at the bottom left. It belongs to the pane, so it stays through /clear and new tasks; empty removes it."},
 	{"/", "filter", "", "Fuzzy-filters the agents by name, pane or command. enter keeps the filter, esc clears it."},
 	{"tab", "lazygit", "", "Runs lazygit in the agent's folder in place of the chat. Keys and mouse go to it until you quit it."},
 	{"pgup/pgdn", "scroll chat", "", "The mouse wheel scrolls too. Scrolling to the top loads older messages."},
@@ -715,6 +726,14 @@ func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 		m.menu = &menu{title: "Keybindings", rows: keybindings}
 	case "p":
 		m.openPrompts()
+	case "e":
+		if a := m.agent(); a != nil {
+			m.noting = true
+			m.note.SetValue(a.note)
+			m.note.CursorEnd()
+			m.note.Width = max(1, m.listWidth()-cardLabel-1)
+			return m.note.Focus()
+		}
 	case "up", "k":
 		if m.selected > 0 {
 			m.selected--
@@ -830,6 +849,25 @@ func (m *model) filterKey(msg tea.KeyMsg) tea.Cmd {
 	return cmd
 }
 
+// noteKey edits the highlighted agent's note: enter saves it (empty removes it), esc leaves it as it was.
+func (m *model) noteKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "enter":
+		if a := m.agent(); a != nil {
+			m.main("set_note", a.pane, m.note.Value())
+			m.reload()
+		}
+		fallthrough
+	case "esc":
+		m.noting = false
+		m.note.Blur()
+		return nil
+	}
+	var cmd tea.Cmd
+	m.note, cmd = m.note.Update(msg)
+	return cmd
+}
+
 func (m *model) setDraft(a *agent, text string) bool {
 	var reply struct{ OK bool }
 	return agentsocket.Request(a.socket, map[string]string{"op": "set_draft", "text": text}, &reply) == nil && reply.OK
@@ -874,6 +912,82 @@ func (m *model) closeReply() {
 	m.reply.Blur()
 	m.layout()
 }
+
+const cardLabel = 8 // the context card's label column
+
+// card is the highlighted agent's context card, at the bottom of the agent list: your note, then what its session
+// file says it did (the plan, its latest commits, the files it edited, its latest reply), to recall what the agent
+// is about without reading the chat. Empty when there is nothing to show.
+func (m *model) card() []string {
+	a := m.agent()
+	if a == nil {
+		return nil
+	}
+	width, c := m.listWidth(), m.context
+	label := func(name string) string { return dim.Render(fmt.Sprintf(" %-*s", cardLabel-1, name)) }
+	var lines []string
+	add := func(name, text string) { lines = append(lines, ansi.Truncate(label(name)+text, width, "…")) }
+	switch {
+	case m.noting:
+		lines = append(lines, label("note")+m.note.View())
+	case a.note != "":
+		add("note", bold.Render(a.note))
+	}
+	if len(c.Plan) > 0 {
+		done, current, active := 0, "", false
+		for _, t := range c.Plan {
+			switch {
+			case t.Status == "completed":
+				done++
+			case t.Status == "in_progress" && !active:
+				current, active = t.Text, true
+			case current == "":
+				current = t.Text
+			}
+		}
+		if current == "" {
+			current = "all done"
+		}
+		add("plan", dim.Render(fmt.Sprintf("%d/%d ", done, len(c.Plan)))+current)
+	}
+	for i, n := len(c.Commits)-1, 0; i >= 0 && n < 2; i, n = i-1, n+1 { // the newest two
+		name := ""
+		if n == 0 {
+			name = "commit"
+		}
+		add(name, dim.Render(c.Commits[i].Hash[:7])+" "+c.Commits[i].Subject)
+	}
+	if len(c.Files) > 0 {
+		names := make([]string, len(c.Files))
+		for i, f := range c.Files {
+			names[i] = filepath.Base(f)
+		}
+		add("files", strings.Join(names, ", "))
+	}
+	if c.Last != "" {
+		// Its first three lines, as plain text: the reply usually opens with the outcome.
+		flat := strings.Join(strings.Fields(strings.NewReplacer("**", "", "`", "").Replace(c.Last)), " ")
+		wrapped := strings.Split(lipgloss.NewStyle().Width(max(1, width-cardLabel)).Render(flat), "\n")
+		if len(wrapped) > 3 {
+			wrapped = append(wrapped[:2], strings.TrimRight(wrapped[2], " ")+"…")
+		}
+		for i, line := range wrapped {
+			name := ""
+			if i == 0 {
+				name = "last"
+			}
+			add(name, line)
+		}
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	lines = append([]string{border.Render(strings.Repeat("─", width))}, lines...)
+	return lines[:min(len(lines), max(0, m.height-1-3))] // the list keeps a few rows in a short popup
+}
+
+// listHeight is the rows the agent list gets above the context card.
+func (m *model) listHeight() int { return max(1, m.height-1-len(m.card())) }
 
 func (m *model) listWidth() int  { return m.width * 35 / 100 }
 func (m *model) rightWidth() int { return max(3, m.width-m.listWidth()-2) } // separator and a space
@@ -1049,7 +1163,8 @@ func (m *model) View() string {
 	if m.width == 0 {
 		return ""
 	}
-	body := max(1, m.height-1)
+	body, card := max(1, m.height-1), m.card()
+	listHeight := max(1, body-len(card))
 	rows, owners := m.listRows()
 	// Keep the selected agent (and its section header) in view when the list is taller than the popup.
 	for i, owner := range owners {
@@ -1061,12 +1176,15 @@ func (m *model) View() string {
 			first = i - 1
 		}
 		m.listTop = min(m.listTop, first)
-		m.listTop = max(m.listTop, i+2-body)
+		m.listTop = max(m.listTop, i+2-listHeight)
 		break
 	}
-	m.listTop = max(0, min(m.listTop, len(rows)-body))
+	m.listTop = max(0, min(m.listTop, len(rows)-listHeight))
 	rows = rows[min(m.listTop, len(rows)):]
-	list := lipgloss.NewStyle().Width(m.listWidth()).Height(body).MaxHeight(body).Render(strings.Join(rows, "\n"))
+	list := lipgloss.NewStyle().Width(m.listWidth()).Height(listHeight).MaxHeight(listHeight).Render(strings.Join(rows, "\n"))
+	if len(card) > 0 {
+		list += "\n" + strings.Join(card, "\n")
+	}
 	chatView := lipgloss.JoinHorizontal(lipgloss.Top,
 		lipgloss.NewStyle().Width(m.chatWidth()).Render(m.chat.View()), " ", m.scrollbar())
 	switch {
@@ -1090,6 +1208,8 @@ func (m *model) View() string {
 		help = "⏎ send · ^j newline · esc keep as draft"
 	case m.filtering:
 		help = "type to fuzzy filter by name, pane or command · ⏎ keep · esc clear"
+	case m.noting:
+		help = "⏎ save the note · esc cancel · empty removes it"
 	case m.menu != nil && m.menu.pick != nil:
 		help = "j/k move · ⏎ show in the chat · esc close"
 	case m.menu != nil:
@@ -1109,7 +1229,10 @@ func newDashboard(mainSh string) *model {
 	reply.KeyMap.WordForward.SetKeys("alt+right", "alt+f", "ctrl+right")
 	filter := textinput.New()
 	filter.Prompt = "/ "
-	return &model{mainSh: mainSh, transcripts: map[string]*transcript.Transcript{}, wanted: chatBlocks, reply: reply, filter: filter}
+	note := textinput.New()
+	note.Prompt = ""
+	note.Placeholder = "what you want to remember about this agent"
+	return &model{mainSh: mainSh, transcripts: map[string]*transcript.Transcript{}, wanted: chatBlocks, reply: reply, filter: filter, note: note}
 }
 
 func main() {
