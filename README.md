@@ -84,8 +84,9 @@ on the same project stand out. The agent of the pane you opened the dashboard fr
 
 Below the list, the highlighted agent's **context card** recalls what it is about without reading its chat: your
 note on it (`e`; it belongs to the pane, so it stays through `/clear` and new tasks), its plan (the latest todo list:
-how many items are done and the current one), its two latest commits, the files it edited (most recent first) and
-the start of its latest reply. All but the note come from its session file, since its last `/clear`.
+how many items are done and the current one) and the start of its latest reply. The plan and reply come from its
+session file, since its last `/clear`. `→` shows the card in full in place of the list (every plan item, the whole
+reply; `j`/`k` scroll), `←` goes back.
 
 On the right is the highlighted agent's chat, rendered from its session file: it wraps to the popup width and
 stays readable while the pane shows something else. Questions the agent asks you (omp's `ask`, Claude Code's

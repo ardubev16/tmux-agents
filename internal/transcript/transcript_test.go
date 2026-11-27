@@ -100,37 +100,26 @@ func TestOmpNewSessionWithoutMessagesIsEmptyNotNil(t *testing.T) {
 }
 
 func TestContextOmp(t *testing.T) {
-	call := func(id, parent, name string, args m) m {
-		return omp(id, parent, "assistant", m{"type": "toolCall", "id": "c" + id, "name": name, "arguments": args})
+	todo := func(id, parent string, tasks ...m) []m {
+		return []m{
+			omp(id, parent, "assistant", m{"type": "toolCall", "id": "c" + id, "name": "todo", "arguments": m{"op": "init"}}),
+			{"type": "message", "id": id + "r", "parentId": id, "message": m{"role": "toolResult", "toolCallId": "c" + id,
+				"toolName": "todo", "content": []m{text("Remaining items")}, "details": m{"phases": []m{{"name": "A", "tasks": tasks}}}}},
+		}
 	}
-	result := func(id, parent, tool, output string, details any) m {
-		return m{"type": "message", "id": id, "parentId": parent, "message": m{"role": "toolResult", "toolCallId": "c" + parent,
-			"toolName": tool, "content": []m{text(output)}, "details": details}}
-	}
-	path := writeJSONL(t, "s.jsonl",
-		omp("1", nil, "user", text("before the clear")),
-		call("2", "1", "write", m{"path": "/r/gone.go"}),
-		m{"type": "reset_boundary", "id": "3", "parentId": "2"},
-		omp("4", "3", "user", text("build it")),
-		call("5", "4", "todo", m{"op": "init"}),
-		result("6", "5", "todo", "Remaining items (2)", m{"phases": []m{
-			{"name": "A", "tasks": []m{{"content": "one", "status": "completed"}, {"content": "two", "status": "in_progress"}}},
-			{"name": "B", "tasks": []m{{"content": "three", "status": "pending"}}}}}),
-		call("7", "6", "edit", m{"input": "[src/a.go#1A2B]\nPUT 1.=1:\n+x\n[src/b.go#3C4D]\nPUT 2.=2:\n+y"}),
-		call("8", "7", "write", m{"path": "src/a.go"}),
-		call("9", "8", "eval", m{"code": "commit"}),
-		result("10", "9", "eval", "[main 69e7284934] feat: the first\n[main 432e2bd774] fix: the second", nil),
-		omp("11", "10", "assistant", text("It works now."), text("Tests pass.")),
-	)
-	c := New(path).Context()
-	want := Context{
-		Plan:    []Todo{{"one", "completed"}, {"two", "in_progress"}, {"three", "pending"}},
-		Commits: []Commit{{"69e7284934", "feat: the first"}, {"432e2bd774", "fix: the second"}},
-		Files:   []string{"src/a.go", "src/b.go"}, // most recent first; nothing from before the /clear
-		Last:    "Tests pass.",
-	}
-	if !reflect.DeepEqual(c, want) {
+	entries := append([]m{omp("1", nil, "user", text("build it"))},
+		todo("2", "1", m{"content": "one", "status": "completed"}, m{"content": "two", "status": "in_progress"})...)
+	entries = append(entries, omp("3", "2r", "assistant", text("It works now."), text("Tests pass.")))
+	want := Context{Plan: []Todo{{"one", "completed"}, {"two", "in_progress"}}, Last: "Tests pass."}
+	if c := New(writeJSONL(t, "s.jsonl", entries...)).Context(); !reflect.DeepEqual(c, want) {
 		t.Errorf("got %+v\nwant %+v", c, want)
+	}
+
+	// After a /clear, the plan from before it is gone.
+	entries = append(entries, m{"type": "reset_boundary", "id": "4", "parentId": "3"}, omp("5", "4", "assistant", text("Fresh start.")))
+	want = Context{Last: "Fresh start."}
+	if c := New(writeJSONL(t, "s.jsonl", entries...)).Context(); !reflect.DeepEqual(c, want) {
+		t.Errorf("after /clear: got %+v\nwant %+v", c, want)
 	}
 }
 
@@ -139,14 +128,10 @@ func TestContextClaude(t *testing.T) {
 		m{"type": "user", "uuid": "1", "message": m{"role": "user", "content": "build it"}},
 		m{"type": "assistant", "uuid": "2", "parentUuid": "1", "message": m{"role": "assistant", "content": []m{
 			{"type": "tool_use", "id": "t1", "name": "TodoWrite", "input": m{"todos": []m{{"content": "one", "status": "pending", "activeForm": "Doing one"}}}},
-			{"type": "tool_use", "id": "t2", "name": "Edit", "input": m{"file_path": "/r/x.go"}},
 		}}},
-		m{"type": "user", "uuid": "3", "parentUuid": "2", "message": m{"role": "user", "content": []m{
-			{"type": "tool_result", "tool_use_id": "t3", "content": "[feat/x (root-commit) abc1234] init"},
-		}}},
-		m{"type": "assistant", "uuid": "4", "parentUuid": "3", "message": m{"role": "assistant", "content": "Done."}},
+		m{"type": "assistant", "uuid": "3", "parentUuid": "2", "message": m{"role": "assistant", "content": "Done."}},
 	)
-	want := Context{Plan: []Todo{{"one", "pending"}}, Commits: []Commit{{"abc1234", "init"}}, Files: []string{"/r/x.go"}, Last: "Done."}
+	want := Context{Plan: []Todo{{"one", "pending"}}, Last: "Done."}
 	if c := New(path).Context(); !reflect.DeepEqual(c, want) {
 		t.Errorf("got %+v\nwant %+v", c, want)
 	}

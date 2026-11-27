@@ -54,6 +54,10 @@ var (
 	border  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Border))
 	warning = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Blocked))
 	busy    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Working))
+	// The context card's: muted labels, your note in the heading color, finished plan items in the done color.
+	muted     = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Muted))
+	noteStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.H1)).Bold(true)
+	doneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Done))
 )
 
 // Agent list sections, in list_agents' order; empty ones are not shown. No state: a session opened but not prompted.
@@ -191,6 +195,9 @@ type model struct {
 
 	noting bool // editing the highlighted agent's note, in its context card
 	note   textinput.Model
+
+	cardOpen bool // the context card in full in place of the agent list (→)
+	cardTop  int  // its first visible line
 
 	lazygit *term.Term // shown in place of the chat while it runs; gets every key
 
@@ -369,7 +376,7 @@ func (m *model) agentChanged() {
 		close(m.stop)
 		m.stop = nil
 	}
-	m.live, m.wanted, m.menu, m.noting = agentsocket.Live{}, chatBlocks, nil, false
+	m.live, m.wanted, m.menu, m.noting, m.cardTop = agentsocket.Live{}, chatBlocks, nil, false, 0
 	m.liveGen++
 	if a != nil && a.socket != "" {
 		m.stop = make(chan struct{})
@@ -543,7 +550,7 @@ func (m *model) mouse(msg tea.MouseMsg) tea.Cmd {
 		if msg.Action != tea.MouseActionPress || m.replying {
 			return nil
 		}
-		if msg.X < m.listWidth() {
+		if msg.X < m.listWidth() && !m.cardOpen {
 			if _, owners := m.listRows(); msg.Y < m.listHeight() && m.listTop+msg.Y < len(owners) && owners[m.listTop+msg.Y] >= 0 {
 				m.selected = owners[m.listTop+msg.Y]
 				m.agentChanged()
@@ -573,6 +580,7 @@ var keybindings = []menuRow{
 	{"↑/k ↓/j", "previous/next agent", "", ""},
 	{"1-9", "agent by number", "", "Numbers follow the visible list: with a filter, they count the matching agents."},
 	{"n", "next needing you", "", "Highlights the next agent waiting for your input or finished while you were away, wrapping around. Each section lists the one waiting longest first."},
+	{"→/l ←/h", "context card", "", "→ shows the highlighted agent's context card in full in place of the list: your note, every item of its plan and its whole latest reply. j/k scroll it, ← goes back to the list."},
 	{"click", "highlight/expand", "", "In the list, highlights the agent. In the chat, expands or folds a thought or tool call to show all of it."},
 	{"enter", "switch to agent", "", ""},
 	{"ctrl+r", "reply", "", "Opens a reply box below the chat: enter sends it, ctrl+j adds a newline. For omp agents it starts from your half-typed prompt, and esc keeps what you wrote as that draft."},
@@ -721,9 +729,26 @@ func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if m.cardOpen {
+		switch msg.String() {
+		case "left", "h", "esc":
+			m.cardOpen = false
+			return nil
+		case "up", "k":
+			m.cardTop = max(0, m.cardTop-1)
+			return nil
+		case "down", "j":
+			m.cardTop++ // View keeps it within the card
+			return nil
+		}
+	}
 	switch msg.String() {
 	case "?":
 		m.menu = &menu{title: "Keybindings", rows: keybindings}
+	case "right", "l":
+		if m.agent() != nil {
+			m.cardOpen, m.cardTop = true, 0
+		}
 	case "p":
 		m.openPrompts()
 	case "e":
@@ -915,20 +940,39 @@ func (m *model) closeReply() {
 
 const cardLabel = 8 // the context card's label column
 
+// planSummary is how many items of the plan are done and the one the agent is on (the first in progress, else the
+// first not done; "all done" when none is left).
+func planSummary(plan []transcript.Todo) (done int, current string) {
+	active := false
+	for _, t := range plan {
+		switch {
+		case t.Status == "completed":
+			done++
+		case t.Status == "in_progress" && !active:
+			current, active = t.Text, true
+		case current == "":
+			current = t.Text
+		}
+	}
+	if current == "" {
+		current = "all done"
+	}
+	return done, current
+}
+
+// plainReply is a reply as plain text: Markdown's bold and code markers dropped.
+func plainReply(md string) string { return strings.NewReplacer("**", "", "`", "").Replace(md) }
+
 // card is the highlighted agent's context card, at the bottom of the agent list: your note, then what its session
-// file says it did (the plan, its latest commits, the files it edited, its latest reply), to recall what the agent
-// is about without reading the chat. Empty when there is nothing to show.
+// file says it is doing (its plan, the start of its latest reply), to recall what the agent is about without reading
+// the chat; → shows it in full (cardDetails). Empty when there is nothing to show.
 func (m *model) card() []string {
 	a := m.agent()
 	if a == nil {
 		return nil
 	}
 	width, c := m.listWidth(), m.context
-	// Each kind of line in its own theme color, so the card reads at a glance; labels stay muted.
-	color := func(c string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(c)) }
-	labelStyle, noteStyle := color(theme.Current.Muted), color(theme.Current.H1).Bold(true)
-	doneStyle, hashStyle, fileStyle := color(theme.Current.Done), color(theme.Current.Tool), color(theme.Current.Link)
-	label := func(name string) string { return labelStyle.Render(fmt.Sprintf(" %-*s", cardLabel-1, name)) }
+	label := func(name string) string { return muted.Render(fmt.Sprintf(" %-*s", cardLabel-1, name)) }
 	var lines []string
 	add := func(name, text string) { lines = append(lines, ansi.Truncate(label(name)+text, width, "…")) }
 	switch {
@@ -938,39 +982,12 @@ func (m *model) card() []string {
 		add("note", noteStyle.Render(a.note))
 	}
 	if len(c.Plan) > 0 {
-		done, current, active := 0, "", false
-		for _, t := range c.Plan {
-			switch {
-			case t.Status == "completed":
-				done++
-			case t.Status == "in_progress" && !active:
-				current, active = t.Text, true
-			case current == "":
-				current = t.Text
-			}
-		}
-		if current == "" {
-			current = "all done"
-		}
+		done, current := planSummary(c.Plan)
 		add("plan", doneStyle.Render(fmt.Sprintf("%d/%d", done, len(c.Plan)))+" "+bold.Render(current))
 	}
-	for i, n := len(c.Commits)-1, 0; i >= 0 && n < 2; i, n = i-1, n+1 { // the newest two
-		name := ""
-		if n == 0 {
-			name = "commit"
-		}
-		add(name, hashStyle.Render(c.Commits[i].Hash[:7])+" "+c.Commits[i].Subject)
-	}
-	if len(c.Files) > 0 {
-		names := make([]string, len(c.Files))
-		for i, f := range c.Files {
-			names[i] = filepath.Base(f)
-		}
-		add("files", fileStyle.Render(strings.Join(names, ", ")))
-	}
 	if c.Last != "" {
-		// Its first three lines, as plain text: the reply usually opens with the outcome.
-		flat := strings.Join(strings.Fields(strings.NewReplacer("**", "", "`", "").Replace(c.Last)), " ")
+		// Its first three lines: the reply usually opens with the outcome.
+		flat := strings.Join(strings.Fields(plainReply(c.Last)), " ")
 		wrapped := strings.Split(lipgloss.NewStyle().Width(max(1, width-cardLabel)).Render(flat), "\n")
 		if len(wrapped) > 3 {
 			wrapped = append(wrapped[:2], strings.TrimRight(wrapped[2], " ")+"…")
@@ -986,8 +1003,72 @@ func (m *model) card() []string {
 	if len(lines) == 0 {
 		return nil
 	}
-	lines = append([]string{border.Render(strings.Repeat("─", width))}, lines...)
+	hint := "─ " + dim.Render("→ more") + " "
+	rule := border.Render("─ ") + dim.Render("→ more") + border.Render(" "+strings.Repeat("─", max(0, width-ansi.StringWidth(hint))))
+	lines = append([]string{rule}, lines...)
 	return lines[:min(len(lines), max(0, m.bodyHeight()-3))] // the list keeps a few rows in a short popup
+}
+
+// cardDetails is the context card in full, shown in place of the agent list (→): your note, every plan item and the
+// agent's whole latest reply, wrapped to the sidebar.
+func (m *model) cardDetails() []string {
+	a := m.agent()
+	if a == nil {
+		return nil
+	}
+	width, c := m.listWidth(), m.context
+	wrap := func(text string, indent int) []string {
+		return strings.Split(lipgloss.NewStyle().Width(max(1, width-indent)).Render(text), "\n")
+	}
+	var lines []string
+	section := func(title string) {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, bold.Render(" "+title))
+	}
+	switch {
+	case m.noting:
+		section("Note")
+		lines = append(lines, " "+m.note.View())
+	case a.note != "":
+		section("Note")
+		for _, line := range wrap(a.note, 1) {
+			lines = append(lines, " "+noteStyle.Render(line))
+		}
+	}
+	if len(c.Plan) > 0 {
+		done, _ := planSummary(c.Plan)
+		section(fmt.Sprintf("Plan %s", doneStyle.Render(fmt.Sprintf("%d/%d", done, len(c.Plan)))))
+		for _, t := range c.Plan {
+			mark, style := "·", lipgloss.NewStyle()
+			switch t.Status {
+			case "completed":
+				mark, style = "✓", dim
+			case "in_progress":
+				mark, style = "▸", bold
+			}
+			for i, line := range wrap(t.Text, 3) {
+				prefix := "   "
+				if i == 0 {
+					prefix = " " + map[string]lipgloss.Style{"✓": doneStyle, "▸": busy, "·": muted}[mark].Render(mark) + " "
+				}
+				lines = append(lines, prefix+style.Render(line))
+			}
+		}
+	}
+	if c.Last != "" {
+		section("Latest reply")
+		for _, paragraph := range strings.Split(plainReply(c.Last), "\n") {
+			for _, line := range wrap(paragraph, 1) {
+				lines = append(lines, " "+line)
+			}
+		}
+	}
+	if len(lines) == 0 {
+		lines = []string{dim.Render(" nothing recorded for this agent yet")}
+	}
+	return lines
 }
 
 // listHeight is the rows the agent list gets above the context card.
@@ -1192,6 +1273,11 @@ func (m *model) View() string {
 	if len(card) > 0 {
 		list += "\n" + strings.Join(card, "\n")
 	}
+	if m.cardOpen {
+		details := m.cardDetails()
+		m.cardTop = max(0, min(m.cardTop, len(details)-body))
+		list = lipgloss.NewStyle().Width(m.listWidth()).Height(body).MaxHeight(body).Render(strings.Join(details[m.cardTop:], "\n"))
+	}
 	chatView := lipgloss.JoinHorizontal(lipgloss.Top,
 		lipgloss.NewStyle().Width(m.chatWidth()).Render(m.chat.View()), " ", m.scrollbar())
 	switch {
@@ -1217,6 +1303,8 @@ func (m *model) View() string {
 		help = "type to fuzzy filter by name, pane or command · ⏎ keep · esc clear"
 	case m.noting:
 		help = "⏎ save the note · esc cancel · empty removes it"
+	case m.cardOpen:
+		help = "j/k scroll · ← back to the list · e note · ⏎ switch"
 	case m.menu != nil && m.menu.pick != nil:
 		help = "j/k move · ⏎ show in the chat · esc close"
 	case m.menu != nil:

@@ -3,7 +3,6 @@ package transcript
 import (
 	"encoding/json"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 )
@@ -11,26 +10,12 @@ import (
 // Todo is one item of the agent's todo list; Status as the harness writes it: completed, in_progress, pending, ….
 type Todo struct{ Text, Status string }
 
-// Commit is one the agent made, as git (or omp's commit helper) reported it.
-type Commit struct{ Hash, Subject string }
-
-// Context is what the agent did in the session (since its last /clear), to recall it at a glance: its latest todo
-// list, the commits it made (oldest first), the files it edited (most recent first), and its latest reply.
+// Context is what the agent is doing in the session (since its last /clear), to recall it at a glance: its latest
+// todo list and its latest reply.
 type Context struct {
-	Plan    []Todo
-	Commits []Commit
-	Files   []string
-	Last    string
+	Plan []Todo
+	Last string
 }
-
-var (
-	// git commit's first line: [branch hash] subject.
-	commitLine = regexp.MustCompile(`(?m)^\[[^\]\s]+ (?:\(root-commit\) )?([0-9a-f]{7,40})\] (.+)$`)
-	// omp's edit tool names each file as [path#TAG].
-	editHeader = regexp.MustCompile(`(?m)^\[([^\]#\n]+)#[0-9A-Za-z]{2,8}\]`)
-	// Tools that write files, omp's and Claude Code's.
-	editTools = map[string]bool{"edit": true, "write": true, "ast_edit": true, "Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true}
-)
 
 // Context reads the active branch back to its root or last /clear; the first call reads the whole file.
 func (t *Transcript) Context() Context {
@@ -55,13 +40,12 @@ func (t *Transcript) Context() Context {
 		key = e.parent()
 	}
 	var c Context
-	var files []string // in the order edited
 	for _, e := range slices.Backward(chain) {
 		msg := e.Message
 		if msg == nil || e.IsMeta || e.IsSidechain {
 			continue
 		}
-		if msg.Role == "toolResult" { // omp
+		if msg.Role == "toolResult" { // omp: the todo tool reports the whole list in its details
 			if msg.ToolName == "todo" {
 				var d struct {
 					Phases []struct {
@@ -77,7 +61,6 @@ func (t *Transcript) Context() Context {
 					}
 				}
 			}
-			c.addCommits(contentText(msg.Content))
 			continue
 		}
 		var parts []part
@@ -88,56 +71,21 @@ func (t *Transcript) Context() Context {
 			continue
 		}
 		for _, p := range parts {
-			switch p.Type {
-			case "text":
-				if text := strings.TrimSpace(p.Text); msg.Role == "assistant" && text != "" {
-					c.Last = text
+			switch {
+			case p.Type == "text" && msg.Role == "assistant" && strings.TrimSpace(p.Text) != "":
+				c.Last = strings.TrimSpace(p.Text)
+			case p.Type == "tool_use" && p.Name == "TodoWrite": // Claude Code: the whole list every time
+				var todos struct {
+					Todos []struct{ Content, Status string }
 				}
-			case "toolCall", "tool_use":
-				args := p.Arguments
-				if args == nil {
-					args = p.Input
-				}
-				if p.Name == "TodoWrite" { // Claude Code: the whole list every time
-					var todos struct {
-						Todos []struct{ Content, Status string }
-					}
-					if raw, err := json.Marshal(args); err == nil && json.Unmarshal(raw, &todos) == nil {
-						c.Plan = nil
-						for _, todo := range todos.Todos {
-							c.Plan = append(c.Plan, Todo{todo.Content, todo.Status})
-						}
+				if raw, err := json.Marshal(p.Input); err == nil && json.Unmarshal(raw, &todos) == nil {
+					c.Plan = nil
+					for _, todo := range todos.Todos {
+						c.Plan = append(c.Plan, Todo{todo.Content, todo.Status})
 					}
 				}
-				if editTools[p.Name] {
-					for _, k := range []string{"path", "file_path", "notebook_path"} {
-						if path, ok := args[k].(string); ok && path != "" {
-							files = append(files, path)
-						}
-					}
-					if input, ok := args["input"].(string); ok {
-						for _, m := range editHeader.FindAllStringSubmatch(input, -1) {
-							files = append(files, m[1])
-						}
-					}
-				}
-			case "tool_result": // Claude Code
-				c.addCommits(contentText(p.Content))
 			}
 		}
 	}
-	seen := map[string]bool{}
-	for _, path := range slices.Backward(files) {
-		if !seen[path] {
-			seen[path] = true
-			c.Files = append(c.Files, path)
-		}
-	}
 	return c
-}
-
-func (c *Context) addCommits(output string) {
-	for _, m := range commitLine.FindAllStringSubmatch(output, -1) {
-		c.Commits = append(c.Commits, Commit{m[1], strings.TrimSpace(m[2])})
-	}
 }

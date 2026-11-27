@@ -54,6 +54,19 @@ func TestCardShowsYourNoteAndTheLatestReplyAndEditsTheNote(t *testing.T) {
 	}
 }
 
+func TestRightShowsTheCardInFullInPlaceOfTheList(t *testing.T) {
+	m, _, _ := newModel(t, "")
+	press(m, "2", "right")
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Latest reply") || !strings.Contains(view, "remember this") || strings.Contains(view, "Waiting") {
+		t.Fatalf("→ did not replace the list with the full card:\n%s", view)
+	}
+	press(m, "j", "left")
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "Waiting") || m.selected != 1 {
+		t.Errorf("← did not go back to the list with the same agent highlighted:\n%s", view)
+	}
+}
+
 func TestNumbersHighlightAgents(t *testing.T) {
 	m, _, _ := newModel(t, "")
 	press(m, "3")
