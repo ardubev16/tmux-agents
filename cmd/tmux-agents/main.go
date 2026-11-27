@@ -54,10 +54,11 @@ var (
 	border  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Border))
 	warning = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Blocked))
 	busy    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Working))
-	// The context card's: muted labels, your note in the heading color, the branch in the link color.
+	// The context card's: muted labels, your note in the code color (unlike needs in the working color, in every
+	// theme), the branch in the link color.
 	branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Link))
 	muted       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Muted))
-	noteStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.H1)).Bold(true)
+	noteStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Code)).Bold(true)
 )
 
 // Agent list sections, in list_agents' order; empty ones are not shown. No state: a session opened but not prompted.
@@ -972,17 +973,27 @@ func (m *model) card() []string {
 		line := ansi.Truncate(label(name)+text, max(0, width-ansi.StringWidth(right)), "…")
 		lines = append(lines, line+strings.Repeat(" ", max(0, width-ansi.StringWidth(line)-ansi.StringWidth(right)))+right)
 	}
+	// addWrapped wraps text over as many lines as it takes, beside its label; right ends the first line.
+	addWrapped := func(name string, style lipgloss.Style, text, right string) {
+		wrapped := lipgloss.NewStyle().Width(max(1, width-cardLabel-ansi.StringWidth(right))).Render(text)
+		for i, line := range strings.Split(wrapped, "\n") {
+			if i > 0 {
+				name, right = "", ""
+			}
+			add(name, style.Render(strings.TrimRight(line, " ")), right)
+		}
+	}
 	switch {
 	case m.noting:
 		lines = append(lines, label("note")+m.note.View())
 	case a.note != "":
-		add("note", noteStyle.Render(a.note), "")
+		addWrapped("note", noteStyle, a.note, "")
 	}
 	if a.doing != "" {
-		add("doing", bold.Render(a.doing), statusAge(a))
+		addWrapped("doing", bold, a.doing, statusAge(a))
 	}
 	if a.needs != "" {
-		add("needs", busy.Render(a.needs), "")
+		addWrapped("needs", busy, a.needs, "")
 	}
 	if m.git != "" {
 		add("git", m.git, "")
