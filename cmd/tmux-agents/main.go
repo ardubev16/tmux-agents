@@ -983,18 +983,21 @@ func (m *model) card() []string {
 		return nil
 	}
 	lines = append([]string{border.Render(strings.Repeat("─", width))}, lines...)
-	return lines[:min(len(lines), max(0, m.height-1-3))] // the list keeps a few rows in a short popup
+	return lines[:min(len(lines), max(0, m.bodyHeight()-3))] // the list keeps a few rows in a short popup
 }
 
 // listHeight is the rows the agent list gets above the context card.
-func (m *model) listHeight() int { return max(1, m.height-1-len(m.card())) }
+func (m *model) listHeight() int { return max(1, m.bodyHeight()-len(m.card())) }
+
+// bodyHeight is the rows above the help bar and its rule.
+func (m *model) bodyHeight() int { return max(1, m.height-2) }
 
 func (m *model) listWidth() int  { return m.width * 35 / 100 }
 func (m *model) rightWidth() int { return max(3, m.width-m.listWidth()-2) } // separator and a space
 func (m *model) chatWidth() int  { return m.rightWidth() - 2 }              // a space and the scrollbar
 
 func (m *model) chatHeight() int {
-	h := m.height - 5 // header and its rule, a blank line, status and help lines
+	h := m.height - 6 // header and its rule, a blank line, the status line, the help bar and its rule
 	if m.replying {
 		h -= m.reply.Height() + 1
 	}
@@ -1163,7 +1166,7 @@ func (m *model) View() string {
 	if m.width == 0 {
 		return ""
 	}
-	body, card := max(1, m.height-1), m.card()
+	body, card := m.bodyHeight(), m.card()
 	listHeight := max(1, body-len(card))
 	rows, owners := m.listRows()
 	// Keep the selected agent (and its section header) in view when the list is taller than the popup.
@@ -1215,7 +1218,7 @@ func (m *model) View() string {
 	case m.menu != nil:
 		help = "j/k move · esc close"
 	}
-	return main + "\n" + dim.Render(ansi.Truncate(help, m.width, "…"))
+	return main + "\n" + border.Render(strings.Repeat("─", m.width)) + "\n" + dim.Render(ansi.Truncate(help, m.width, "…"))
 }
 
 func newDashboard(mainSh string) *model {
