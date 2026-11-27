@@ -70,20 +70,6 @@ func TestRightShowsTheCardInFullInPlaceOfTheList(t *testing.T) {
 	}
 }
 
-func TestParsePR(t *testing.T) {
-	for _, c := range []struct{ json, pr, ci string }{
-		{`{"number":42,"state":"OPEN","isDraft":false,"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"},{"state":"SUCCESS"}]}`, "#42 open", "✓"},
-		{`{"number":42,"state":"OPEN","isDraft":true,"statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":""},{"status":"COMPLETED","conclusion":"SUCCESS"}]}`, "#42 draft", "…"},
-		{`{"number":7,"state":"MERGED","statusCheckRollup":[{"status":"IN_PROGRESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]}`, "#7 merged", "✗"},
-		{`{"number":7,"state":"CLOSED","statusCheckRollup":[]}`, "#7 closed", ""},
-		{`not json`, "", ""},
-	} {
-		if pr, ci := parsePR([]byte(c.json)); pr != c.pr || ci != c.ci {
-			t.Errorf("%s: got %q %q, want %q %q", c.json, pr, ci, c.pr, c.ci)
-		}
-	}
-}
-
 func TestNumbersHighlightAgents(t *testing.T) {
 	m, _, _ := newModel(t, "")
 	press(m, "3")

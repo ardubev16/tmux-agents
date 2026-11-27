@@ -89,16 +89,15 @@ on the same project stand out. The agent of the pane you opened the dashboard fr
 Below the list, the highlighted agent's **context card** recalls what it is about without reading its chat: your
 note on it (`e`; it belongs to the pane, so it stays through `/clear` and new tasks), what the agent says it is
 **doing** overall and **needs** from you (it reports both at the end of every turn; with how long ago), and where its
-branch stands (with the GitHub CLI: its pull request and CI). `→` shows the card in full in place of the list
-(`j`/`k` scroll), `←` goes back.
+branch stands: its name, uncommitted changes to tracked files (`3 files +40 −12`) and unpushed commits (`⇡2`). `→`
+shows the card in full in place of the list (`j`/`k` scroll), `←` goes back.
 
 On the right is the highlighted agent's chat, rendered from its session file: it wraps to the popup width and
 stays readable while the pane shows something else. Questions the agent asks you (omp's `ask`, Claude Code's
 `AskUserQuestion`) appear with their choices, without the answers the agent prefilled. Your prompts show in a
 box, shaded from your terminal's background. Thoughts (`∴`) and tool calls (`⚙`, in yellow) take one line each;
 the one the agent is on shows expanded (the full thoughts, or the tool's arguments and result) until it moves on.
-omp agents also stream their reply as it is written, what they are doing, and prompts queued while they work. The
-header shows the agent's uncommitted changes to tracked files (`3 files +40 −12`) and unpushed commits (`⇡2`).
+omp agents also stream their reply as it is written, what they are doing, and prompts queued while they work.
 
 | Key | Action |
 | --- | --- |

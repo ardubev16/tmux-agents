@@ -54,12 +54,10 @@ var (
 	border  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Border))
 	warning = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Blocked))
 	busy    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Working))
-	// The context card's: muted labels, your note in the heading color, the branch in the link color, a passing CI
-	// in the done color.
+	// The context card's: muted labels, your note in the heading color, the branch in the link color.
 	branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Link))
 	muted       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Muted))
 	noteStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.H1)).Bold(true)
-	doneStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Done))
 )
 
 // Agent list sections, in list_agents' order; empty ones are not shown. No state: a session opened but not prompted.
@@ -169,11 +167,8 @@ type (
 	tickMsg    struct{}
 	termMsg    struct{} // lazygit's screen changed or it exited
 	agentsMsg  []agent  // list_agents, read in the background
-	changesMsg struct {
-		dir, text string
-		git       gitState
-	}
-	liveMsg struct {
+	changesMsg struct{ dir, git string }
+	liveMsg    struct {
 		gen  int
 		live *agentsocket.Live // nil: the subscription ended
 	}
@@ -190,7 +185,7 @@ type model struct {
 	listTop  int // first visible row of the agent list
 	frame    int
 	closing  string // pane waiting for a second x to confirm closing it
-	changes  string // the highlighted agent's uncommitted changes, e.g. "3 files +40 −12"
+	git      string // the highlighted agent's branch and changes, for its context card (gitLine)
 	notice   string // an error to show until the next key
 
 	// The per-second agent list and the git summary run in the background, so keys never wait for them.
@@ -212,7 +207,6 @@ type model struct {
 	transcripts map[string]*transcript.Transcript // by path, so polls only parse appended lines
 	wanted      int                               // newest blocks the chat shows; grows on scrolling up
 	shown       string                            // what the chat shows, to skip identical re-renders
-	git         gitState                          // where the highlighted agent's work stands, for its card
 
 	live    agentsocket.Live // latest snapshot from the highlighted agent's socket
 	liveGen int
@@ -295,7 +289,7 @@ func (m *model) fetchChanges() tea.Cmd {
 	if dir == "" {
 		return nil
 	}
-	return func() tea.Msg { return changesMsg{dir, changes(dir), gitStatus(dir)} }
+	return func() tea.Msg { return changesMsg{dir, gitLine(dir)} }
 }
 
 // applyFilter lists the agents matching the filter, keeping the highlighted one when it still matches.
@@ -334,6 +328,24 @@ func fuzzy(s, query string) bool {
 		s = s[i+utf8.RuneLen(r):]
 	}
 	return true
+}
+
+// gitLine is where the work in dir stands, for the context card: the branch checked out, then its changes; "" when
+// dir is not in a git repo.
+func gitLine(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "branch", "--show-current").Output()
+	if err != nil {
+		return ""
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" {
+		branch = "detached HEAD"
+	}
+	line := branchStyle.Render(branch)
+	if c := changes(dir); c != "" {
+		line += dim.Render(" · ") + busy.Render(c)
+	}
+	return line
 }
 
 // changes sums up dir's uncommitted changes to tracked files and the commits its upstream lacks, e.g.
@@ -379,7 +391,7 @@ func (m *model) agentChanged() {
 	if a == nil || a.pane != m.closing {
 		m.closing = ""
 	}
-	m.changes, m.git = "", gitState{}
+	m.git = ""
 	m.wantChanges()
 	if m.stop != nil {
 		close(m.stop)
@@ -494,7 +506,7 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		}
 	case changesMsg:
 		if a := m.agent(); a != nil && a.path == msg.dir {
-			m.changes, m.git = msg.text, msg.git
+			m.git = msg.git
 		}
 	case liveMsg:
 		if msg.gen != m.liveGen {
@@ -972,8 +984,8 @@ func (m *model) card() []string {
 	if a.needs != "" {
 		add("needs", busy.Render(a.needs), "")
 	}
-	if m.git.branch != "" {
-		add("git", m.git.render(), "")
+	if m.git != "" {
+		add("git", m.git, "")
 	}
 	if len(lines) == 0 {
 		return nil
@@ -1025,8 +1037,8 @@ func (m *model) cardDetails() []string {
 		section("Status", dim, "none yet: the agent reports it at the end of its turn (omp's tmux_status tool; "+
 			"Claude Code gets the instruction at session start)")
 	}
-	if m.git.branch != "" {
-		lines = append(lines, "", bold.Render(" Git"), " "+m.git.render())
+	if m.git != "" {
+		lines = append(lines, "", bold.Render(" Git"), " "+m.git)
 	}
 	return lines
 }
@@ -1169,14 +1181,9 @@ func (m *model) header() string {
 	if a == nil {
 		return ""
 	}
-	// The git summary at the right edge, a column short of it; the name and details give way to it.
-	changes := ""
-	if m.changes != "" {
-		changes = "  " + busy.Render(m.changes)
-	}
-	width := m.rightWidth() - 1 - ansi.StringWidth(changes)
+	width := m.rightWidth() - 1
 	head := ansi.Truncate(bold.Render(name(*a))+"  "+dim.Render(details(*a)), width, "…")
-	return head + strings.Repeat(" ", max(0, width-ansi.StringWidth(head))) + changes
+	return head + strings.Repeat(" ", max(0, width-ansi.StringWidth(head)))
 }
 
 func (m *model) status() string {
