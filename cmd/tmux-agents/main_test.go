@@ -57,16 +57,16 @@ func TestCardShowsYourNoteAndTheAgentsStatusAndEditsTheNote(t *testing.T) {
 	}
 }
 
-func TestRightShowsTheCardInFullInPlaceOfTheList(t *testing.T) {
+func TestTabShowsTheCardInFullInPlaceOfTheList(t *testing.T) {
 	m, _, _ := newModel(t, "")
-	press(m, "2", "right")
+	press(m, "2", "tab")
 	view := ansi.Strip(m.View())
 	if !strings.Contains(view, "Needs from you") || !strings.Contains(view, "remember this") || strings.Contains(view, "Waiting") {
-		t.Fatalf("→ did not replace the list with the full card:\n%s", view)
+		t.Fatalf("tab did not replace the list with the full card:\n%s", view)
 	}
-	press(m, "j", "left")
+	press(m, "j", "tab")
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "Waiting") || m.selected != 1 {
-		t.Errorf("← did not go back to the list with the same agent highlighted:\n%s", view)
+		t.Errorf("tab did not go back to the list with the same agent highlighted:\n%s", view)
 	}
 }
 
@@ -495,7 +495,7 @@ func TestTabRunsLazygitInPlaceOfTheChat(t *testing.T) {
 			}
 		}
 	}
-	press(m, "down", "tab")
+	press(m, "down", "g")
 	waitFor("lazygit", func() bool { return strings.Contains(m.View(), "stub-lazygit") })
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "Waiting") {
 		t.Errorf("the agent list should stay next to lazygit:\n%s", view)

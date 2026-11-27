@@ -89,8 +89,8 @@ on the same project stand out. The agent of the pane you opened the dashboard fr
 Below the list, the highlighted agent's **context card** recalls what it is about without reading its chat: your
 note on it (`e`; it belongs to the pane, so it stays through `/clear` and new tasks), what the agent says it is
 **doing** overall and **needs** from you (it reports both at the end of every turn; with how long ago), and where its
-branch stands: its name, uncommitted changes to tracked files (`3 files +40 −12`) and unpushed commits (`⇡2`). `→`
-shows the card in full in place of the list (`j`/`k` scroll), `←` goes back.
+branch stands: its name, uncommitted changes to tracked files (`3 files +40 −12`) and unpushed commits (`⇡2`).
+`Tab` shows the card in full in place of the list (`j`/`k` scroll); `Tab` or `Esc` goes back.
 
 On the right is the highlighted agent's chat, rendered from its session file: it wraps to the popup width and
 stays readable while the pane shows something else. Questions the agent asks you (omp's `ask`, Claude Code's
@@ -108,7 +108,7 @@ omp agents also stream their reply as it is written, what they are doing, and pr
 | `p` | List the tasks you gave the agent in this session: when you sent each and how long it worked on it (messages sent while it worked count toward its task); `Enter` scrolls the chat to one |
 | `e` | Edit your note on the agent, shown in its context card; empty removes it |
 | `/` | Fuzzy-filter the list by name, pane or command; `Enter` keeps the filter, `Esc` clears it |
-| `Tab` | Run lazygit in the agent's folder in place of the chat; keys and mouse go to it until you quit it |
+| `g` | Run lazygit in the agent's folder in place of the chat; keys and mouse go to it until you quit it |
 | `PgUp`/`PgDn`, wheel | Scroll the chat; scrolling to the top loads older messages |
 | Click a thought or tool call | Expand it, or fold it back |
 | `x`, `x` | Stop the agent like a normal exit (SIGTERM, so it saves its session) and close its pane |

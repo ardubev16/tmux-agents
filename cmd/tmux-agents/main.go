@@ -54,11 +54,12 @@ var (
 	border  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Border))
 	warning = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Blocked))
 	busy    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Working))
-	// The context card's: muted labels, your note in the code color (unlike needs in the working color, in every
-	// theme), the branch in the link color.
+	// The context card's: muted labels, your note in the working color, needs in the code color (they differ in
+	// every theme), the branch in the link color.
 	branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Link))
 	muted       = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Muted))
-	noteStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Code)).Bold(true)
+	noteStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Working)).Bold(true)
+	needsStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Current.Code))
 )
 
 // Agent list sections, in list_agents' order; empty ones are not shown. No state: a session opened but not prompted.
@@ -199,7 +200,7 @@ type model struct {
 	noting bool // editing the highlighted agent's note, in its context card
 	note   textinput.Model
 
-	cardOpen bool // the context card in full in place of the agent list (→)
+	cardOpen bool // the context card in full in place of the agent list (tab)
 	cardTop  int  // its first visible line
 
 	lazygit *term.Term // shown in place of the chat while it runs; gets every key
@@ -598,14 +599,14 @@ var keybindings = []menuRow{
 	{"↑/k ↓/j", "previous/next agent", "", ""},
 	{"1-9", "agent by number", "", "Numbers follow the visible list: with a filter, they count the matching agents."},
 	{"n", "next needing you", "", "Highlights the next agent waiting for your input or finished while you were away, wrapping around. Each section lists the one waiting longest first."},
-	{"→/l ←/h", "context card", "", "→ shows the highlighted agent's context card in full in place of the list: your note, what the agent says it is doing and needs from you, and where its branch stands. j/k scroll it, ← goes back to the list."},
+	{"tab", "context card", "", "Shows the highlighted agent's context card in full in place of the list: your note, what the agent says it is doing and needs from you, and where its branch stands. j/k scroll it, tab or esc go back to the list."},
 	{"click", "highlight/expand", "", "In the list, highlights the agent. In the chat, expands or folds a thought or tool call to show all of it."},
 	{"enter", "switch to agent", "", ""},
 	{"ctrl+r", "reply", "", "Opens a reply box below the chat: enter sends it, ctrl+j adds a newline. For omp agents it starts from your half-typed prompt, and esc keeps what you wrote as that draft."},
 	{"p", "prompts", "", "Lists the tasks you gave the agent in this session, oldest first: when you sent each and how long the agent worked on it. Prompts sent while it worked count toward the task it was on. enter scrolls the chat to it."},
 	{"e", "note", "", "Edits your own line about the agent, shown in its context card at the bottom left. It belongs to the pane, so it stays through /clear and new tasks; empty removes it."},
 	{"/", "filter", "", "Fuzzy-filters the agents by name, pane or command. enter keeps the filter, esc clears it."},
-	{"tab", "lazygit", "", "Runs lazygit in the agent's folder in place of the chat. Keys and mouse go to it until you quit it."},
+	{"g", "lazygit", "", "Runs lazygit in the agent's folder in place of the chat. Keys and mouse go to it until you quit it."},
 	{"pgup/pgdn", "scroll chat", "", "The mouse wheel scrolls too. Scrolling to the top loads older messages."},
 	{"x x", "close agent", "", "Stops the agent like a normal exit (SIGTERM, so it saves its session) and closes its pane. The first x asks to confirm."},
 	{"?", "keybindings", "", ""},
@@ -749,7 +750,7 @@ func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 	}
 	if m.cardOpen {
 		switch msg.String() {
-		case "left", "h", "esc":
+		case "tab", "esc":
 			m.cardOpen = false
 			return nil
 		case "up", "k":
@@ -763,7 +764,7 @@ func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "?":
 		m.menu = &menu{title: "Keybindings", rows: keybindings}
-	case "right", "l":
+	case "tab":
 		if m.agent() != nil {
 			m.cardOpen, m.cardTop = true, 0
 		}
@@ -843,7 +844,7 @@ func (m *model) key(msg tea.KeyMsg) tea.Cmd {
 	case "/":
 		m.filtering = true
 		return m.filter.Focus()
-	case "tab":
+	case "g":
 		if a := m.agent(); a != nil {
 			cmd := exec.Command("lazygit")
 			cmd.Dir = a.path
@@ -960,7 +961,7 @@ const cardLabel = 8 // the context card's label column
 
 // card is the highlighted agent's context card, at the bottom of the agent list, to recall what the agent is about
 // without reading its chat: your note, its own status (what it is doing, what it needs from you; it reports them at
-// the end of each turn), and where its branch stands. → shows it in full (cardDetails). Empty with nothing to show.
+// the end of each turn), and where its branch stands. tab shows it in full (cardDetails). Empty with nothing to show.
 func (m *model) card() []string {
 	a := m.agent()
 	if a == nil {
@@ -993,7 +994,7 @@ func (m *model) card() []string {
 		addWrapped("doing", bold, a.doing, statusAge(a))
 	}
 	if a.needs != "" {
-		addWrapped("needs", busy, a.needs, "")
+		addWrapped("needs", needsStyle, a.needs, "")
 	}
 	if m.git != "" {
 		add("git", m.git, "")
@@ -1001,8 +1002,8 @@ func (m *model) card() []string {
 	if len(lines) == 0 {
 		return nil
 	}
-	hint := "─ " + dim.Render("→ more") + " "
-	rule := border.Render("─ ") + dim.Render("→ more") + border.Render(" "+strings.Repeat("─", max(0, width-ansi.StringWidth(hint))))
+	hint := "─ " + dim.Render("tab: more") + " "
+	rule := border.Render("─ ") + dim.Render("tab: more") + border.Render(" "+strings.Repeat("─", max(0, width-ansi.StringWidth(hint))))
 	lines = append([]string{rule}, lines...)
 	return lines[:min(len(lines), max(0, m.bodyHeight()-3))] // the list keeps a few rows in a short popup
 }
@@ -1015,7 +1016,7 @@ func statusAge(a *agent) string {
 	return dim.Render(" " + ago(a.statusAt, time.Now()))
 }
 
-// cardDetails is the context card in full, shown in place of the agent list (→): your note and the agent's status
+// cardDetails is the context card in full, shown in place of the agent list (tab): your note and the agent's status
 // wrapped to the sidebar, and where its branch stands.
 func (m *model) cardDetails() []string {
 	a := m.agent()
@@ -1042,7 +1043,7 @@ func (m *model) cardDetails() []string {
 		section("Doing"+statusAge(a), bold, a.doing)
 	}
 	if a.needs != "" {
-		section("Needs from you", busy, a.needs)
+		section("Needs from you", needsStyle, a.needs)
 	}
 	if a.doing == "" && a.needs == "" {
 		section("Status", dim, "none yet: the agent reports it at the end of its turn (omp's tmux_status tool; "+
@@ -1271,7 +1272,7 @@ func (m *model) View() string {
 	}
 	sep := border.Render(strings.Repeat("│\n", body-1) + "│")
 	main := lipgloss.JoinHorizontal(lipgloss.Top, list, sep, " ", strings.Join(right, "\n"))
-	help := "⏎ switch · n next needing you · ^r reply · tab lazygit · x close agent · ? keybindings"
+	help := "⏎ switch · n next needing you · ^r reply · g lazygit · tab context · x close agent · ? keybindings"
 	switch {
 	case m.lazygit != nil:
 		help = "keys go to lazygit · quit it (q) to return to the chat"
@@ -1282,7 +1283,7 @@ func (m *model) View() string {
 	case m.noting:
 		help = "⏎ save the note · esc cancel · empty removes it"
 	case m.cardOpen:
-		help = "j/k scroll · ← back to the list · e note · ⏎ switch"
+		help = "j/k scroll · tab back to the list · e note · ⏎ switch"
 	case m.menu != nil && m.menu.pick != nil:
 		help = "j/k move · ⏎ show in the chat · esc close"
 	case m.menu != nil:
