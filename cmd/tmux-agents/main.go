@@ -924,14 +924,18 @@ func (m *model) card() []string {
 		return nil
 	}
 	width, c := m.listWidth(), m.context
-	label := func(name string) string { return dim.Render(fmt.Sprintf(" %-*s", cardLabel-1, name)) }
+	// Each kind of line in its own theme color, so the card reads at a glance; labels stay muted.
+	color := func(c string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(c)) }
+	labelStyle, noteStyle := color(theme.Current.Muted), color(theme.Current.H1).Bold(true)
+	doneStyle, hashStyle, fileStyle := color(theme.Current.Done), color(theme.Current.Tool), color(theme.Current.Link)
+	label := func(name string) string { return labelStyle.Render(fmt.Sprintf(" %-*s", cardLabel-1, name)) }
 	var lines []string
 	add := func(name, text string) { lines = append(lines, ansi.Truncate(label(name)+text, width, "…")) }
 	switch {
 	case m.noting:
 		lines = append(lines, label("note")+m.note.View())
 	case a.note != "":
-		add("note", bold.Render(a.note))
+		add("note", noteStyle.Render(a.note))
 	}
 	if len(c.Plan) > 0 {
 		done, current, active := 0, "", false
@@ -948,21 +952,21 @@ func (m *model) card() []string {
 		if current == "" {
 			current = "all done"
 		}
-		add("plan", dim.Render(fmt.Sprintf("%d/%d ", done, len(c.Plan)))+current)
+		add("plan", doneStyle.Render(fmt.Sprintf("%d/%d", done, len(c.Plan)))+" "+bold.Render(current))
 	}
 	for i, n := len(c.Commits)-1, 0; i >= 0 && n < 2; i, n = i-1, n+1 { // the newest two
 		name := ""
 		if n == 0 {
 			name = "commit"
 		}
-		add(name, dim.Render(c.Commits[i].Hash[:7])+" "+c.Commits[i].Subject)
+		add(name, hashStyle.Render(c.Commits[i].Hash[:7])+" "+c.Commits[i].Subject)
 	}
 	if len(c.Files) > 0 {
 		names := make([]string, len(c.Files))
 		for i, f := range c.Files {
 			names[i] = filepath.Base(f)
 		}
-		add("files", strings.Join(names, ", "))
+		add("files", fileStyle.Render(strings.Join(names, ", ")))
 	}
 	if c.Last != "" {
 		// Its first three lines, as plain text: the reply usually opens with the outcome.
