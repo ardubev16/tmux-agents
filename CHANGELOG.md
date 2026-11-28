@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.2.0](https://github.com/ardubev16/tmux-agents/compare/v0.1.0...v0.2.0) (2026-11-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **dashboard:** lazygit opens with g instead of tab.
+* **integrations:** install.sh needs the harnesses to act on, e.g. `install.sh install omp claude`.
+
+### Features
+
+* agents report what they are doing and need from you; the context card shows it with the branch's PR and CI ([ced1d11](https://github.com/ardubev16/tmux-agents/commit/ced1d117829d47ae616f1fffa33f7ac5e63deff0))
+* **dashboard:** [@tmux](https://github.com/tmux)_agents_theme: terminal (default) or omp's gruvbox-dark ([97cbf4f](https://github.com/ardubev16/tmux-agents/commit/97cbf4f35b2d36b98e6cd931eae2a332ba417c96))
+* **dashboard:** → shows the context card in full; drop its commits and files ([6ef50e8](https://github.com/ardubev16/tmux-agents/commit/6ef50e8223d3456a20dc26af7162f359c48cd4a0))
+* **dashboard:** box prompts in a theme shade, expand the step being written, theme colors for steps ([fe4c45a](https://github.com/ardubev16/tmux-agents/commit/fe4c45aee4da7a4fcdc09d9a8a0bd44d24d35035))
+* **dashboard:** browse the ? keybindings with j/k and read the highlighted one's detail ([8973550](https://github.com/ardubev16/tmux-agents/commit/89735505352bd2cdde1a0f7298032fc87e86be57))
+* **dashboard:** color agents by project and show how long they have been idle ([c3adacf](https://github.com/ardubev16/tmux-agents/commit/c3adacf0460375300619011ae3c2aaccfabc59e7))
+* **dashboard:** context card below the agent list, with your own note on the agent ([2e955bc](https://github.com/ardubev16/tmux-agents/commit/2e955bcb477576630abd6c86627fb09f6dc8b982))
+* **dashboard:** count prompts sent while the agent worked toward its task; runtime at the right ([432e2bd](https://github.com/ardubev16/tmux-agents/commit/432e2bd774be72dc540b4141da66217a518e884b))
+* **dashboard:** git summary at the header's right edge, tool calls muted ([c7a8d96](https://github.com/ardubev16/tmux-agents/commit/c7a8d96fed0b5e61767c04363cfc48478ee2286a))
+* **dashboard:** highlight the agent of the pane the dashboard opens over ([333cbef](https://github.com/ardubev16/tmux-agents/commit/333cbef422e9dd044c8cba1cbcff5c401b62dacf))
+* **dashboard:** keep each project's color for good and highlight agents with 1-9 ([dc9df65](https://github.com/ardubev16/tmux-agents/commit/dc9df65f82db11140190743e6cb6c9e6eb4b040f))
+* **dashboard:** list the keybindings under ? and trim the bottom bar ([03d9c76](https://github.com/ardubev16/tmux-agents/commit/03d9c7621cc9083ad0885b5b5d24f81b51b0ca5e))
+* **dashboard:** n highlights the next agent needing you; waiting agents show how long ([ec12c8f](https://github.com/ardubev16/tmux-agents/commit/ec12c8f581264150b14ebd8adfb30672a60e7fe6))
+* **dashboard:** p lists the session's prompts and jumps the chat to one ([69e7284](https://github.com/ardubev16/tmux-agents/commit/69e7284934a1cb00eef303a4f93ad7be42e4d955))
+* **dashboard:** show thoughts and tool calls as gray one-line steps that expand ([339e6c6](https://github.com/ardubev16/tmux-agents/commit/339e6c6bdba57fc4c745591e9c7cace19787e67a))
+* **dashboard:** tab toggles the full context card, g opens lazygit; swap note/needs colors ([7359df2](https://github.com/ardubev16/tmux-agents/commit/7359df2471a4b6a7ea6b1cf8ae118cd764e88a9a))
+* **integrations:** install only the harnesses named on the command line ([7c609c2](https://github.com/ardubev16/tmux-agents/commit/7c609c213b7185453dcb3df24ac16c0824a61f32))
+* list agents as soon as their session opens, before the first prompt ([642def9](https://github.com/ardubev16/tmux-agents/commit/642def9e7d5f7a3e7e967dbdb8dabbba309e04a2))
+* list the agent longest in its state first within each section ([7079d35](https://github.com/ardubev16/tmux-agents/commit/7079d35ba68ec164b0db226bea21a6a3fb742f1b))
+* **status:** default background follows the status line ([0ace495](https://github.com/ardubev16/tmux-agents/commit/0ace4952448dd6ad95b9f6854055f0841cb1bb45))
+
+
+### Bug Fixes
+
+* dashboard text in the terminal's color, not popup-style's ([3ad7141](https://github.com/ardubev16/tmux-agents/commit/3ad714119bab72db7c5e7a2cb09ccbcfde9427a3))
+* **dashboard:** give each project a distinct color, on its name only ([fdd3d6e](https://github.com/ardubev16/tmux-agents/commit/fdd3d6e88a71b0dfdb52f3159b899ceedd585f69))
+* **dashboard:** hide the ? box's tooltip section for keys without one ([aff6f21](https://github.com/ardubev16/tmux-agents/commit/aff6f21fb4c19c52071b0964f4b2d0099fc565e5))
+* **dashboard:** keep the ? box in place and show tooltips only where they add something ([e027d5c](https://github.com/ardubev16/tmux-agents/commit/e027d5ccd2430f6f461d3b4647a723c83574ce57))
+* **dashboard:** keep the header's git summary clear of the scrollbar column ([46e10ff](https://github.com/ardubev16/tmux-agents/commit/46e10ff33c3fec1d12c410ca35c3b1292cf80729))
+* **dashboard:** one column of padding right of the header's git summary ([2069ea9](https://github.com/ardubev16/tmux-agents/commit/2069ea94cbf619385298cf934173fa5722f3aede))
+* **dashboard:** show an empty chat for a session not written yet, not the previous agent's ([f2dbc1a](https://github.com/ardubev16/tmux-agents/commit/f2dbc1a2445aaf1cf92a981f2b6b620333d5069d))
+* **dashboard:** show the new conversation after omp /new and /clear ([62c80e3](https://github.com/ardubev16/tmux-agents/commit/62c80e301b91bf5ebd6da1b6e940dfa4c60e6536))
+* **dashboard:** wrap the context card's fields; note in its own color ([13857ca](https://github.com/ardubev16/tmux-agents/commit/13857ca2fd8f4929059b4b198d8f99eec0cb27bb))
+* **omp:** clear a queued prompt once the agent gets it mid-run ([6e0e739](https://github.com/ardubev16/tmux-agents/commit/6e0e739918da0df9f13aedd5033b393ef12d7836))
+* **omp:** notice /move right away instead of on the next prompt ([8b18ca3](https://github.com/ardubev16/tmux-agents/commit/8b18ca33aa05d98202e38fc30b5333fced7a69c3))
+* **omp:** report the session file again after /move ([dc15b68](https://github.com/ardubev16/tmux-agents/commit/dc15b689d8c029d9abd58c04942e62158e95b363))
+
+
+### Reverts
+
+* keep popup-style's text color in the dashboard ([c8765ea](https://github.com/ardubev16/tmux-agents/commit/c8765eaffcd9b2881e229d785723869e2bb0e14f))
+
 ## 0.1.0 (2026-11-25)
 
 
